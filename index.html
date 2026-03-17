@@ -583,6 +583,7 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const DOC_REF = db.collection('appdata').doc('main');
 
+var MOMO_BACKEND = 'https://your-mapsaa-backend.railway.app';
 let appData = null;
 let isSaving = false;
 let pendingSave = false;
@@ -636,6 +637,15 @@ const defaultData = {
   yearArchives: []
 };
 
+function formatLastSeen(ts) {
+  if (!ts) return 'Never';
+  const diff = Date.now() - ts;
+  if (diff < 60000) return 'Just now';
+  if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff/3600000) + 'h ago';
+  return new Date(ts).toLocaleDateString('en-UG',{day:'numeric',month:'short',year:'numeric'});
+}
+
 function saveData() {
   // Always save to localStorage immediately as backup
   try { localStorage.setItem('mapsaaData', JSON.stringify(appData)); } catch(e) {}
@@ -660,6 +670,20 @@ function migrateData() {
   if (!appData.yearArchives) appData.yearArchives = [];
   if (!appData.loanRequests) appData.loanRequests = [];
   if (!appData.notifications) appData.notifications = {};
+  if (!appData.pendingDeposits) appData.pendingDeposits = [];
+  if (appData.featuresActivated === undefined) appData.featuresActivated = false;
+  if (!appData.activationDate) appData.activationDate = null;
+  if (!appData.loanSettings) appData.loanSettings = {
+    minMonths:3, minSavings:60000, multiplierBase:2,
+    pointsPerMonth:10, pointsDeductMiss:5, welcomeBonus:100,
+    tiers:[
+      {name:'Bronze', icon:'🥉', minPts:0,   maxPts:400,   rate:6, color:'#CD7F32', multiplier:2},
+      {name:'Silver', icon:'🥈', minPts:401, maxPts:600,   rate:5, color:'#A8B8C8', multiplier:2.5},
+      {name:'Gold',   icon:'🥇', minPts:601, maxPts:750,   rate:4, color:'#FFD700', multiplier:3},
+      {name:'Diamond',icon:'💎', minPts:751, maxPts:99999, rate:3, color:'#4ECDC4', multiplier:4}
+    ]
+  };
+  appData.members.forEach(function(m){ if(!m.momoNumber) m.momoNumber=''; if(!m.pointHistory) m.pointHistory=[]; if(m.welcomeBonusGiven===undefined) m.welcomeBonusGiven=false; });
   // Migrate old hardcoded co-admin (Solomon id:7) to new dynamic system
   if (!appData.coAdmins) {
     appData.coAdmins = [{ memberId: 7, accessLevel: 'view' }];
@@ -704,6 +728,24 @@ function migrateData() {
 function hideLoading() {
   const overlay = document.getElementById('loadingOverlay');
   if (overlay) overlay.style.display = 'none';
+  try { localStorage.removeItem('mapsaaSession'); } catch(e) {}
+  if (!currentUser) {
+    try {
+      const saved = sessionStorage.getItem('mapsaaSession');
+      if (saved && appData) {
+        const sess = JSON.parse(saved);
+        if (sess.role === 'admin') { currentUser = sess; startApp(); return; }
+        else if (sess.role === 'coadmin') {
+          const still = (appData.coAdmins||[]).find(x=>x.memberId===sess.memberId);
+          if (still) { currentUser = sess; startApp(); return; }
+        } else if (sess.role === 'member') {
+          const mem = appData.members.find(x=>x.id===sess.memberId&&x.active);
+          if (mem) { currentUser = sess; startApp(); return; }
+        }
+        sessionStorage.removeItem('mapsaaSession');
+      }
+    } catch(e) { sessionStorage.removeItem('mapsaaSession'); }
+  }
   const loginPage = document.getElementById('loginPage');
   if (loginPage && !currentUser) loginPage.style.display = 'flex';
 }
@@ -826,6 +868,9 @@ function doLogin() {
   const adminPass = appData.adminPassword || ADMIN_PASS;
   if (email === ADMIN_EMAIL.toLowerCase() && pass === adminPass) {
     currentUser = { role: 'admin', email: ADMIN_EMAIL, memberId: 8 };
+    const adminMbr = appData.members.find(x=>x.id===8);
+    if (adminMbr) { adminMbr.lastLogin = Date.now(); saveData(); }
+    sessionStorage.setItem('mapsaaSession', JSON.stringify(currentUser));
     startApp(); return;
   }
 
@@ -835,6 +880,7 @@ function doLogin() {
     const m = appData.members.find(x => x.id === ca.memberId && x.active);
     if (m && m.email.toLowerCase() === email && m.password && pass === m.password) {
       currentUser = { role: 'coadmin', email: m.email, memberId: m.id, accessLevel: ca.accessLevel };
+      sessionStorage.setItem('mapsaaSession', JSON.stringify(currentUser));
       startApp(); return;
     }
   }
@@ -848,6 +894,9 @@ function doLogin() {
     }
     if (pass === member.password) {
       currentUser = { role: 'member', email: member.email, memberId: member.id };
+      member.lastLogin = Date.now();
+      saveData();
+      sessionStorage.setItem('mapsaaSession', JSON.stringify(currentUser));
       startApp();
       if (!member.firstLogin) {
         member.firstLogin = true;
@@ -865,6 +914,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Enter' && !currentUse
 
 function doLogout() {
   stopInactivityTimer();
+  sessionStorage.removeItem('mapsaaSession');
+  localStorage.removeItem('mapsaaSession');
   currentUser = null;
   currentPage = null;
   listenerActive = false;
@@ -998,7 +1049,9 @@ function buildSidebar() {
       <div class="nav-section-label">Account Control</div>
       ${currentUser.role === 'admin' ? '<div class="nav-item" onclick="navigateTo(\'accountSetup\')"><span class="nav-icon">🔑</span> Account Setup</div>' : ''}
       <div class="nav-item" onclick="navigateTo('myDashboard')"><span class="nav-icon">👤</span> View My Data</div>
+      <div class="nav-item" onclick="navigateTo('mySavings')"><span class="nav-icon">💰</span> My Savings</div>
       <div class="nav-item" onclick="showMemberChangePasswordModal()"><span class="nav-icon">🔑</span> Change Password</div>
+      <div class="nav-item" onclick="showUpdateMoMoModal()"><span class="nav-icon">📱</span> My MoMo Number</div>
       ${currentUser.role === 'admin' ? '<div class="nav-item" id="adminChatNav" onclick="navigateTo(\'adminChat\')"><span class="nav-icon">💬</span> Direct Chats <span id="adminChatBadge" style="display:none;background:var(--gold);color:var(--deep);border-radius:50%;width:18px;height:18px;font-size:10px;font-weight:700;align-items:center;justify-content:center;margin-left:6px">0</span></div>' : ''}
     `;
   } else {
@@ -1006,13 +1059,15 @@ function buildSidebar() {
       <div class="nav-section-label">My Account</div>
       <div class="nav-item" onclick="navigateTo('myDashboard')"><span class="nav-icon">🏠</span> My Dashboard</div>
       <div class="nav-item" onclick="navigateTo('mySavings')"><span class="nav-icon">💰</span> My Savings</div>
-      <div class="nav-item" onclick="navigateTo('myLoans')"><span class="nav-icon">🏦</span> My Loans</div>
+      ${(appData&&appData.featuresActivated)?`<div class="nav-item" onclick="navigateTo('myLoans')"><span class="nav-icon">🏦</span> My Loans</div>`:`<div class="nav-item" style="opacity:0.4;cursor:default;"><span class="nav-icon">🏦</span> My Loans <span style="font-size:10px;background:rgba(201,168,76,0.15);padding:1px 5px;border-radius:4px;">Soon</span></div>`}
       <div class="nav-section-label">Community</div>
       <div class="nav-item" onclick="navigateTo('comments')"><span class="nav-icon">💬</span> Comments & Inquiries</div>
       <div class="nav-item" onclick="navigateTo('myChat')"><span class="nav-icon">💬</span> Chat with Admin</div>
       <div class="nav-item" onclick="navigateTo('history')"><span class="nav-icon">📅</span> Year History</div>
       <div class="nav-section-label">Account</div>
+      <div class="nav-item" onclick="navigateTo('mySavings')"><span class="nav-icon">💰</span> My Savings</div>
       <div class="nav-item" onclick="showMemberChangePasswordModal()"><span class="nav-icon">🔑</span> Change Password</div>
+      <div class="nav-item" onclick="showUpdateMoMoModal()"><span class="nav-icon">📱</span> My MoMo Number</div>
     `;
   }
 }
@@ -1140,16 +1195,25 @@ function renderPage(page) {
     case 'dashboard': content.innerHTML = renderAdminDashboard(); break;
     case 'members': content.innerHTML = renderAdminMembers(); break;
     case 'savings': content.innerHTML = renderAdminSavings(); break;
-    case 'loans': content.innerHTML = renderAdminLoans(); break;
+    case 'loans':
+      if (appData && appData.featuresActivated) { content.innerHTML = renderAdminLoans(); }
+      else { content.innerHTML = renderLockedPage('Loans Not Activated', currentUser.role==='admin' ? 'Go to Account Setup to activate when your group is ready.' : 'Only the main admin can activate this feature.', currentUser.role==='admin' ? 'accountSetup' : null); }
+      break;
     case 'announcements': content.innerHTML = renderAdminAnnouncements(); break;
     case 'comments': content.innerHTML = renderComments(); break;
     case 'accountSetup': if(currentUser.role==='admin') content.innerHTML = renderAccountSetup(); else navigateTo('dashboard'); break;
     case 'myDashboard': content.innerHTML = renderMemberDashboard(); break;
     case 'mySavings': content.innerHTML = renderMemberSavings(); break;
-    case 'myLoans': content.innerHTML = renderMemberLoans(); break;
+    case 'myLoans':
+      content.innerHTML = (appData&&appData.featuresActivated) ? renderMemberLoans() : renderLockedPage('Coming Soon', 'Loan features will be activated by the admin when your group is ready. Keep saving!', null);
+      break;
     case 'myChat': content.innerHTML = renderMemberChat(); break;
-    case 'myPoints': content.innerHTML = renderMyPoints(); break;
-    case 'adminPoints': content.innerHTML = renderAdminPoints(); break;
+    case 'myPoints':
+      content.innerHTML = (appData&&appData.featuresActivated) ? renderMyPoints() : renderLockedPage('Coming Soon', 'Points and tiers will unlock when the admin activates the full system.', null);
+      break;
+    case 'adminPoints':
+      content.innerHTML = (appData&&appData.featuresActivated) ? renderAdminPoints() : renderLockedPage('Coming Soon', 'Points and tiers will unlock when you activate the full system.', 'accountSetup');
+      break;
     case 'history': content.innerHTML = renderYearHistory(); break;
     case 'adminChat': content.innerHTML = renderAdminChatList(); break;
     case 'adminChatOpen': content.innerHTML = renderAdminChatOpen(); break;
@@ -1228,7 +1292,7 @@ function renderAdminMembers() {
             ${appData.members.map(m=>`
               <tr>
                 <td style="color:var(--text-muted)">${m.id}</td>
-                <td><div style="display:flex;align-items:center;gap:8px"><div class="member-list-avatar" style="width:30px;height:30px;font-size:11px">${initials(m.name)}</div><span style="font-weight:500">${m.name}</span></div></td>
+                <td><div style="display:flex;align-items:center;gap:8px"><div class="member-list-avatar" style="width:30px;height:30px;font-size:11px">${initials(m.name)}</div><span style="font-weight:500">${m.name}</span><div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Last login: ${m.lastLogin ? formatLastSeen(m.lastLogin) : 'Never'}</div></div></td>
                 <td>${m.sex==='M'?'♂ Male':'♀ Female'}</td>
                 <td style="color:var(--text-muted)">${m.contact}</td>
                 <td style="color:var(--text-muted);font-size:12px">${m.email}</td>
@@ -1239,7 +1303,9 @@ function renderAdminMembers() {
                 <td>
                   <div style="display:flex;gap:6px;flex-wrap:wrap">
                     <button class="btn btn-sm btn-outline" onclick="showEditMemberModal(${m.id})">Edit</button>
-                    <button class="btn btn-sm ${m.active?'btn-danger':'btn-success'}" onclick="toggleMemberStatus(${m.id})">${m.active?'Remove':'Restore'}</button>
+                    <button class="btn btn-sm ${m.active?'btn-warning':'btn-success'}" onclick="toggleMemberStatus(${m.id})" style="${m.active?'background:#f59e0b;border-color:#f59e0b;':''}">${m.active?'Remove':'Restore'}</button>
+                    ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteMember(${m.id})">Delete</button>` : ''}
+                    ${(currentUser.role==='admin'||(currentUser.role==='coadmin'&&currentUser.accessLevel==='full')) ? `<button class="btn btn-sm" style="background:#22c55e;border:none;color:#fff;" onclick="showSendMoneyModal(${m.id})">&#x1F4B8; Send</button>` : ''}
                     ${currentUser.role === 'admin' ? `<button class="btn btn-sm btn-danger" onclick="showClearMemberDataModal(${m.id})" style="opacity:0.75">🧹 Clear Data</button>` : ''}
                   </div>
                 </td>` : ''}
@@ -1330,8 +1396,24 @@ function toggleMemberStatus(id) {
   saveData(); navigateTo('members');
   showToast(m.active ? 'Member restored!' : 'Member removed from active list!');
 }
+function confirmDeleteMember(id) {
+  const m = appData.members.find(x=>x.id===id);
+  if (!m) return;
+  if (!confirm('Permanently delete ' + m.name + ' and ALL their data? This cannot be undone.')) return;
+  appData.members = appData.members.filter(x=>x.id!==id);
+  appData.loanRequests = (appData.loanRequests||[]).filter(r=>r.memberId!==id);
+  if (appData.notifications) delete appData.notifications[id];
+  if (appData.chats) { Object.keys(appData.chats).forEach(k=>{ if(k==String(id)||k.startsWith(id+'-')||k.endsWith('-'+id)) delete appData.chats[k]; }); }
+  if (appData.coAdmins) appData.coAdmins = appData.coAdmins.filter(x=>x.memberId!==id);
+  saveData(); navigateTo('members');
+  showToast(m.name + ' permanently deleted.');
+}
 
 // ========== DELETE / CLEAR TEST DATA ==========
+function doDeleteNotice(nid) {
+  appData.announcements = (appData.announcements||[]).filter(n=>n.id!==nid);
+  saveData(); showToast('Notice deleted'); navigateTo('announcements');
+}
 function confirmDeleteLoan(mId, loanId) {
   const m = appData.members.find(x=>x.id===mId);
   const loan = m.loans.find(l=>l.id===loanId);
@@ -1459,7 +1541,23 @@ function renderAdminSavings() {
   return `
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:16px;flex-wrap:wrap">
       ${isEditor() ? '<button class="btn btn-primary" onclick="showUpdateSavingsModal()">💰 Update Savings</button>' : ''}
+      ${(currentUser.role==='admin'||(currentUser.role==='coadmin'&&currentUser.accessLevel==='full')) ? '<button class="btn" style="background:linear-gradient(135deg,#c17f24,#f5a623);color:#fff;font-weight:700;border:none;" onclick="showYearEndPayoutModal()">Year-End Payout</button>' : ''}
     </div>
+    ${(()=>{
+      var pending = appData.pendingDeposits || [];
+      if(!pending.length) return '';
+      return '<div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.3);border-radius:14px;padding:16px;margin-bottom:20px;">' +
+        '<div style="font-weight:700;font-size:15px;margin-bottom:12px;color:var(--gold);">&#x23F3; Pending MoMo Deposits (' + pending.length + ')</div>' +
+        pending.map(function(p){
+          return '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px;background:var(--card-bg);border-radius:10px;margin-bottom:8px;border:1px solid var(--border);">' +
+            '<div><div style="font-weight:600;">' + p.memberName + '</div><div style="font-size:12px;color:var(--text-muted);">' + p.month + ' &middot; ' + p.phone + ' &middot; ' + new Date(p.ts).toLocaleString() + '</div></div>' +
+            '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<div style="font-weight:700;color:var(--gold);">UGX ' + p.amount.toLocaleString() + '</div>' +
+            '<button class="btn btn-sm" style="background:#22c55e;border:none;color:#fff;" data-pid="' + p.id + '" onclick="confirmPendingDeposit(this.dataset.pid)">&#x2705; Confirm</button>' +
+            '<button class="btn btn-sm btn-danger" data-pid="' + p.id + '" onclick="rejectPendingDeposit(this.dataset.pid)">&#x274C; Reject</button>' +
+            '</div></div>';
+        }).join('') + '</div>';
+    })()}
     <div class="table-wrap">
       <div class="table-header"><div class="table-title">All Members — Savings Overview</div></div>
       <div class="overflow-x">
@@ -2100,8 +2198,11 @@ function renderMemberDashboard() {
   const pts = getMemberPoints(m);
   const tier = getPointTier(m);
   const limit = getLoanLimit(m);
-  const nextTierPts = tier.name === 'Bronze' ? 301 : tier.name === 'Silver' ? 601 : null;
-  const progress = tier.name === 'Bronze' ? Math.min(((pts-100)/200)*100,100) : tier.name === 'Silver' ? Math.min(((pts-301)/300)*100,100) : 100;
+  const _tiers = (appData&&appData.loanSettings&&appData.loanSettings.tiers)||[];
+  const _ti = _tiers.findIndex(t=>t.name===tier.name);
+  const _nt = _ti>=0 ? _tiers[_ti+1] : null;
+  const nextTierPts = _nt ? _nt.minPts : null;
+  const progress = _nt ? Math.min(((pts-(tier.minPts||0))/(_nt.minPts-(tier.minPts||0)))*100,100) : 100;
 
   return `
     <div class="profile-header">
@@ -2111,7 +2212,7 @@ function renderMemberDashboard() {
         <div class="profile-meta">📱 ${m.contact} · ✉️ ${m.email}</div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
           <span class="badge badge-success">Active Member</span>
-          <span class="badge" style="background:rgba(201,168,76,0.15);color:${tier.color};border:1px solid ${tier.color}55">${tier.icon} ${tier.name}</span>
+          ${appData&&appData.featuresActivated ? `<span class="badge" style="background:rgba(201,168,76,0.15);color:${tier.color};border:1px solid ${tier.color}55">${tier.icon} ${tier.name}</span>` : ''}
         </div>
       </div>
       <div class="profile-share">
@@ -2130,6 +2231,7 @@ function renderMemberDashboard() {
     </div>
 
     <!-- Points Card -->
+    ${(appData&&appData.featuresActivated) ? `
     <div style="background:linear-gradient(135deg,var(--deep2),var(--deep3));border:1px solid ${tier.color}55;border-radius:14px;padding:20px;margin-bottom:24px">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px">
         <div style="display:flex;align-items:center;gap:16px">
@@ -2137,29 +2239,35 @@ function renderMemberDashboard() {
           <div>
             <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-muted);margin-bottom:2px">Points & Tier</div>
             <div style="font-family:'Playfair Display',serif;font-size:26px;font-weight:700;color:var(--gold)">${pts} <span style="font-size:14px;font-weight:400;color:${tier.color}">pts</span></div>
-            <div style="font-size:13px;font-weight:600;color:${tier.color}">${tier.name} Member — ${tier.rate}% interest/month</div>
+            <div style="font-size:13px;font-weight:600;color:${tier.color}">${tier.name} Member - ${tier.rate}% interest/month</div>
           </div>
         </div>
         <div style="text-align:right">
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Max Loan</div>
           <div style="font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:var(--accent)">${fmt(limit)}</div>
-          <div style="font-size:11px;color:var(--text-muted)">${getMembershipMonths(m)>=12?'2× savings':'1× savings'} + ${fmt(pts*200)} pts &nbsp;|&nbsp; ${getMembershipMonths(m)>=12?'✅ 1+ year member':getMembershipMonths(m)>=3?`${12-getMembershipMonths(m)} mo to 2× limit`:'🔒 '+(3-getMembershipMonths(m))+' mo to qualify'}</div>
         </div>
       </div>
       ${nextTierPts ? `
         <div style="margin-top:14px">
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:5px">
-            <span>${tier.name} Tier</span><span>${nextTierPts - pts} pts to ${tier.name==='Bronze'?'Silver':'Diamond'}</span>
+            <span>${tier.name} Tier</span><span>${nextTierPts - pts} pts to next tier</span>
           </div>
           <div class="progress-bar-bg" style="height:6px;border-radius:3px">
             <div style="height:6px;border-radius:3px;width:${progress}%;background:${tier.color};transition:width 0.8s ease"></div>
           </div>
         </div>
-      ` : '<div style="margin-top:10px;font-size:12px;color:var(--gold)">🏆 You are at the highest tier!</div>'}
+      ` : '<div style="margin-top:10px;font-size:12px;color:var(--gold)">You are at the highest tier!</div>'}
       <div style="margin-top:10px;text-align:right">
-        <button class="btn btn-sm btn-outline" onclick="navigateTo('myPoints')">View Full History →</button>
+        <button class="btn btn-sm btn-outline" onclick="navigateTo('myPoints')">View Full History</button>
       </div>
     </div>
+    ` : `
+    <div style="background:linear-gradient(135deg,var(--deep2),var(--deep3));border:1px solid rgba(255,255,255,0.05);border-radius:14px;padding:20px;margin-bottom:24px;text-align:center">
+      <div style="font-size:48px;margin-bottom:8px">&#x1F512;</div>
+      <div style="font-size:16px;font-weight:700;color:var(--gold);margin-bottom:6px">Coming Soon</div>
+      <div style="font-size:13px;color:var(--text-muted);max-width:280px;margin:0 auto;line-height:1.6">Points and tiers will unlock when the admin activates the full system.</div>
+    </div>
+    `}
 
     ${announcements.length > 0 ? `
       <div class="section-title">📢 Latest Announcements</div>
@@ -2195,7 +2303,7 @@ function renderMemberDashboard() {
             </div>
           `).join('')}
         </div>
-        ${currentUser.role !== 'admin' ? `<div style="margin-top:12px"><button class="btn btn-outline" style="width:100%" onclick="showLoanRequestModal()">🏦 Request a Loan</button></div>` : ''}
+        ${(appData&&appData.featuresActivated) ? `<div style="margin-top:12px"><button class="btn btn-outline" style="width:100%" onclick="showLoanRequestModal()">🏦 Request a Loan</button></div>` : ''}
       </div>
     </div>
   `;
@@ -2206,6 +2314,10 @@ function renderMemberDashboard() {
 let selectedSavingsYear = new Date().getFullYear();
 
 function renderMemberSavings() {
+  // Deposit button at top
+  var depositBtn = '<div style="display:flex;justify-content:flex-end;margin-bottom:16px;">' +
+    '<button class="btn" style="background:linear-gradient(135deg,#ffcc00,#f5a623);color:#1a1a1a;font-weight:700;border:none;padding:10px 20px;border-radius:10px;font-size:14px;" onclick="showMoMoDepositModal()">&#x1F4F1; Deposit via MoMo</button>' +
+    '</div>';
   const m = appData.members.find(x=>x.id===currentUser.memberId);
   const currentYear = new Date().getFullYear();
   const archives = appData.yearArchives || [];
@@ -2310,6 +2422,7 @@ function renderMemberSavings() {
   ` : '';
 
   return `
+    ${depositBtn}
     <!-- Header: current year total & share -->
     <div style="margin-bottom:24px">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px">
@@ -2646,7 +2759,7 @@ function renderAccountSetup() {
           <tbody>
             ${setMembers.map(m => `
               <tr>
-                <td><div style="display:flex;align-items:center;gap:8px"><div class="member-list-avatar" style="width:30px;height:30px;font-size:11px">${initials(m.name)}</div><span style="font-weight:500">${m.name}</span></div></td>
+                <td><div style="display:flex;align-items:center;gap:8px"><div class="member-list-avatar" style="width:30px;height:30px;font-size:11px">${initials(m.name)}</div><span style="font-weight:500">${m.name}</span><div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Last login: ${m.lastLogin ? formatLastSeen(m.lastLogin) : 'Never'}</div></div></td>
                 <td style="color:var(--text-muted);font-size:12px">${m.email}</td>
                 <td><span class="badge badge-success">🔐 Custom Password</span></td>
                 <td>
@@ -2667,9 +2780,340 @@ function renderAccountSetup() {
         ℹ️ Inactive members are not shown above. Restore them in Member Management first to set their passwords.
       </div>
     ` : ''}
+    ${renderActivationSection()}
   `;
 }
 
+
+function renderLockedPage(title, msg, goTo) {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:300px;text-align:center;padding:40px">' +
+    '<div style="font-size:64px;margin-bottom:16px;">&#x1F512;</div>' +
+    '<div style="font-size:22px;font-weight:700;color:var(--gold);margin-bottom:8px;">Coming Soon</div>' +
+    '<div style="font-size:14px;color:var(--text-muted);max-width:300px;line-height:1.7;margin-bottom:20px;">' + msg + '</div>' +
+    (goTo ? '<button class="btn btn-primary" onclick="navigateTo(&#x27;' + goTo + '&#x27;)">Go to Settings</button>' : '') +
+    '</div>';
+}
+
+// ========== FEATURE ACTIVATION ==========
+function renderActivationSection() {
+  const activated = appData.featuresActivated;
+  const ls = appData.loanSettings;
+  const actDate = appData.activationDate ? new Date(appData.activationDate).toLocaleDateString('en-UG',{day:'numeric',month:'long',year:'numeric'}) : null;
+  var tiersHtml = '';
+  ls.tiers.forEach(function(t,i) {
+    var inp = function(lbl, val, step, field) {
+      return '<div><div style="font-size:10px;color:var(--text-muted)">'+lbl+'</div>' +
+        '<input type="number" data-tier="'+i+'" data-field="'+field+'" value="'+val+'" step="'+step+'" ' +
+        (field==='minPts'&&i===0?'disabled ':'') +
+        'onchange="updateTierVal(parseInt(this.dataset.tier),this.dataset.field,this.value)" ' +
+        'style="width:65px;padding:4px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:12px;"/></div>';
+    };
+    tiersHtml += '<div style="display:grid;grid-template-columns:130px 70px 70px 70px;gap:8px;align-items:center;padding:10px;background:var(--card-bg);border-radius:8px;margin-bottom:6px;border:1px solid var(--border);">' +
+      '<div style="font-weight:600;">'+t.icon+' '+t.name+' <span style="font-size:10px;color:var(--text-muted)">'+t.minPts+'-'+(t.maxPts===99999?'inf':t.maxPts)+' pts</span></div>' +
+      inp('Min Pts', t.minPts, '1', 'minPts') +
+      inp('Rate %', t.rate, '0.5', 'rate') +
+      inp('Loan Mult', t.multiplier, '0.5', 'multiplier') +
+      '</div>';
+  });
+  var settingsHtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">' +
+    '<div style="background:var(--card-bg);border-radius:8px;padding:10px;border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Min months for loan</div><input type="number" id="ls-mm" value="'+ls.minMonths+'" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;"></div>' +
+    '<div style="background:var(--card-bg);border-radius:8px;padding:10px;border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Min savings (UGX)</div><input type="number" id="ls-ms" value="'+ls.minSavings+'" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;"></div>' +
+    '<div style="background:var(--card-bg);border-radius:8px;padding:10px;border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Points per month saved</div><input type="number" id="ls-pm" value="'+ls.pointsPerMonth+'" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;"></div>' +
+    '<div style="background:var(--card-bg);border-radius:8px;padding:10px;border:1px solid var(--border);"><div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Points deducted (miss)</div><input type="number" id="ls-pd" value="'+ls.pointsDeductMiss+'" style="width:100%;padding:7px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;"></div>' +
+    '</div>';
+  var activationHtml = activated ?
+    '<div style="display:flex;align-items:center;gap:12px;padding:14px;background:rgba(34,197,94,0.08);border-radius:10px;border:1px solid rgba(34,197,94,0.3);margin-bottom:10px"><div style="font-size:28px;">&#x2705;</div><div><div style="font-weight:700;color:#22c55e;">Loans & Points LIVE</div><div style="font-size:12px;color:var(--text-muted);">Activated '+actDate+'</div></div></div>' +
+    '<button class="btn" style="width:100%;background:rgba(220,38,38,0.1);color:#dc2626;border:1px solid rgba(220,38,38,0.3);font-weight:600;" onclick="confirmDeactivate()">Deactivate</button>' :
+    '<div style="font-size:13px;color:var(--text-muted);line-height:1.9;margin-bottom:14px;">When activated:<br>&#x1F381; Everyone gets <strong style="color:var(--gold)">'+ls.welcomeBonus+' welcome bonus points</strong><br>&#x23F1; Loan clock starts from today<br>&#x1F513; Loans & points unlock for all</div>' +
+    '<div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.3);border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:var(--text-muted);">You can deactivate this later if needed.</div>' +
+    '<button class="btn btn-primary" style="width:100%;background:linear-gradient(135deg,#22c55e,#16a34a);border:none;font-weight:700;" onclick="confirmActivate()">&#x1F680; Activate Loans & Points</button>';
+  return '<div class="table-wrap" style="margin-bottom:20px;">' +
+    '<div class="table-header"><div class="table-title">&#x2699;&#xFE0F; Loan & Points Settings</div></div>' +
+    '<div style="padding:14px 18px">' + settingsHtml + tiersHtml +
+    '<button class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="saveLoanSettings()">&#x1F4BE; Save Settings</button>' +
+    '</div></div>' +
+    '<div class="table-wrap" style="margin-bottom:20px;border-color:'+(activated?'rgba(34,197,94,0.4)':'rgba(201,168,76,0.35)')+'">' +
+    '<div class="table-header"><div class="table-title">'+(activated?'&#x2705; Features Active':'&#x1F512; Activate Loans & Points')+'</div></div>' +
+    '<div style="padding:14px 18px">' + activationHtml + '</div></div>';
+}
+function updateTierVal(i,f,v) {
+  if(!appData.loanSettings||!appData.loanSettings.tiers) return;
+  appData.loanSettings.tiers[i][f]=parseFloat(v);
+  if(f==='minPts'&&i>0) appData.loanSettings.tiers[i-1].maxPts=parseFloat(v)-1;
+}
+function saveLoanSettings() {
+  var ls=appData.loanSettings;
+  var mm=document.getElementById('ls-mm'), ms=document.getElementById('ls-ms'),
+      pm=document.getElementById('ls-pm'), pd=document.getElementById('ls-pd');
+  if(mm) ls.minMonths=parseInt(mm.value)||3;
+  if(ms) ls.minSavings=parseInt(ms.value)||60000;
+  if(pm) ls.pointsPerMonth=parseInt(pm.value)||10;
+  if(pd) ls.pointsDeductMiss=parseInt(pd.value)||5;
+  saveData(); showToast('Settings saved!'); navigateTo('accountSetup');
+}
+function confirmActivate() {
+  var ls=appData.loanSettings;
+  openModal('<div class="modal-title">Activate Loans & Points</div>' +
+    '<div style="font-size:14px;color:var(--text-muted);line-height:1.8;margin-bottom:16px;">This gives every member <strong style="color:var(--gold)">'+ls.welcomeBonus+' bonus points</strong>, starts the loan clock from today, and unlocks loans & points for all members.</div>' +
+    '<div style="display:flex;gap:10px;"><button class="btn btn-outline" style="flex:1" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" style="flex:1;background:#22c55e;border:none;" onclick="doActivate()">Yes, Activate!</button></div>');
+}
+function doActivate() {
+  appData.featuresActivated = true;
+  appData.activationDate = Date.now();
+  var ls = appData.loanSettings;
+  appData.members.forEach(function(m) {
+    if (!m.active) return;
+    // Only give welcome bonus ONCE ever - check flag
+    if (!m.welcomeBonusGiven) {
+      var b = ls.welcomeBonus || 100;
+      m.points = (m.points || 0) + b;
+      if (!m.pointHistory) m.pointHistory = [];
+      m.pointHistory.unshift({ts:Date.now(), type:'earn', pts:b, reason:'Welcome bonus - Loans activated!'});
+      m.welcomeBonusGiven = true;
+      addNotification(m.id, 'Loans & Points Now Live!', 'The full MAPSAA system is now active! You received ' + b + ' welcome bonus points.');
+    } else {
+      // Reactivation - just notify, no extra points
+      addNotification(m.id, 'Loans & Points Reactivated!', 'The loan and points system has been reactivated by the admin.');
+    }
+  });
+  saveData(); closeModal(); navigateTo('accountSetup');
+  showToast('Features activated! All members notified.');
+}
+function confirmDeactivate() {
+  openModal('<div class="modal-title">Deactivate?</div>' +
+    '<div style="font-size:14px;color:var(--text-muted);margin-bottom:16px;">This will hide loans & points from members. All data is preserved.</div>' +
+    '<div style="display:flex;gap:10px;"><button class="btn btn-outline" style="flex:1" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-danger" style="flex:1;" onclick="doDeactivate()">Yes, Deactivate</button></div>');
+}
+function doDeactivate() {
+  appData.featuresActivated = false;
+  appData.activationDate = null;
+  // Wipe ALL points for ALL members and reset bonus flag - clean slate for next activation
+  appData.members.forEach(function(m) {
+    m.points = 0;
+    m.pointHistory = [];
+    m.welcomeBonusGiven = false;
+  });
+  saveData(); closeModal(); navigateTo('accountSetup');
+  showToast('Deactivated. All points wiped. Fresh start on next activation.');
+}
+
+// ========== MOMO DEPOSIT ==========
+function showMoMoDepositModal() {
+  var m = appData.members.find(function(x){return x.id===currentUser.memberId;});
+  var phone = m.momoNumber || (m.contact ? '0'+m.contact : '');
+  var currentMonth = new Date().toLocaleString('default',{month:'long'});
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var monthOpts = months.map(function(mo){ return '<option value="'+mo+'"'+(mo===currentMonth?' selected':'')+'>'+mo+'</option>'; }).join('');
+  openModal(
+    '<div class="modal-title">&#x1F4F1; Deposit via MoMo</div>' +
+    '<div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--text-muted);">A payment request will be sent to your MTN MoMo. Approve it on your phone to complete the deposit.</div>' +
+    '<div class="input-group"><label>Saving Month</label><select id="momoMonth">'+monthOpts+'</select></div>' +
+    '<div class="input-group"><label>Amount (UGX)</label><input type="number" id="momoAmount" value="20000" min="1000" placeholder="e.g. 20000"/></div>' +
+    '<div class="input-group"><label>MTN MoMo Number</label><input type="tel" id="momoPhone" value="'+phone+'" placeholder="e.g. 0771234567"/></div>' +
+    '<div class="modal-actions">' +
+    '<button class="btn btn-outline" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" style="background:linear-gradient(135deg,#ffcc00,#f5a623);color:#1a1a1a;border:none;font-weight:700;" onclick="submitMoMoDeposit()">&#x1F4F1; Pay Now</button>' +
+    '</div>'
+  );
+}
+async function submitMoMoDeposit() {
+  var amount = parseInt(document.getElementById('momoAmount').value);
+  var phone = document.getElementById('momoPhone').value.trim();
+  var month = document.getElementById('momoMonth').value;
+  var m = appData.members.find(function(x){return x.id===currentUser.memberId;});
+  if(!amount||amount<1000){showToast('Enter a valid amount (min UGX 1,000)');return;}
+  if(!phone||phone.length<10){showToast('Enter a valid MTN number');return;}
+  var btn = document.querySelector('.modal-box .btn-primary');
+  if(btn){btn.textContent='Sending...';btn.disabled=true;}
+  try {
+    var res = await fetch(MOMO_BACKEND+'/pay/request',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({amount:amount,phone:phone,memberId:String(m.id),memberName:m.name,month:month})});
+    var data = await res.json();
+    if(data.success) {
+      if(!appData.pendingDeposits) appData.pendingDeposits=[];
+      appData.pendingDeposits.push({id:'pd_'+Date.now(),memberId:m.id,memberName:m.name,amount:amount,phone:phone,month:month,referenceId:data.referenceId,ts:Date.now()});
+      var adminM = appData.members.find(function(x){return x.id===8;});
+      if(adminM) addNotification(8,'&#x1F4B0; Pending MoMo Deposit',m.name+' initiated a MoMo deposit of UGX '+amount.toLocaleString()+' for '+month+'. Please confirm.');
+      saveData(); closeModal();
+      showToast('MoMo prompt sent! Check your phone and enter your PIN.');
+    } else {
+      if(btn){btn.textContent='Pay Now';btn.disabled=false;}
+      showToast('Failed: '+(data.error&&data.error.message ? data.error.message : 'Please try again.'));
+    }
+  } catch(e) {
+    if(btn){btn.textContent='Pay Now';btn.disabled=false;}
+    showToast('Could not reach payment server. Check your connection.');
+  }
+}
+function confirmPendingDeposit(depositId) {
+  var dep = (appData.pendingDeposits||[]).find(function(x){return x.id===depositId;});
+  if(!dep) return;
+  var m = appData.members.find(function(x){return x.id===dep.memberId;});
+  if(!m) return;
+  if(!m.savings[dep.month]) m.savings[dep.month]=[0,0,0,0];
+  m.savings[dep.month][0] += dep.amount;
+  appData.pendingDeposits = (appData.pendingDeposits||[]).filter(function(x){return x.id!==depositId;});
+  addNotification(dep.memberId,'&#x2705; Savings Confirmed','Your MoMo deposit of UGX '+dep.amount.toLocaleString()+' for '+dep.month+' has been confirmed.');
+  saveData(); navigateTo('savings');
+  showToast('Deposit confirmed for '+dep.memberName);
+}
+function rejectPendingDeposit(depositId) {
+  var dep = (appData.pendingDeposits||[]).find(function(x){return x.id===depositId;});
+  if(dep) addNotification(dep.memberId,'&#x274C; Deposit Not Confirmed','Your MoMo deposit of UGX '+dep.amount.toLocaleString()+' for '+dep.month+' could not be confirmed. Contact admin.');
+  appData.pendingDeposits = (appData.pendingDeposits||[]).filter(function(x){return x.id!==depositId;});
+  saveData(); navigateTo('savings');
+  showToast('Deposit rejected.');
+}
+function showSendMoneyModal(memberId) {
+  var m = appData.members.find(function(x){return x.id===memberId;});
+  var phone = m.momoNumber || (m.contact ? '0'+m.contact : '');
+  openModal(
+    '<div class="modal-title">&#x1F4B8; Send Money to '+m.firstName+'</div>' +
+    '<div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.3);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--text-muted);">Money will be sent directly to '+m.firstName+'&#x27;s MTN MoMo wallet.</div>' +
+    '<div class="input-group"><label>Amount (UGX)</label><input type="number" id="sendAmount" min="1000" placeholder="e.g. 500000"/></div>' +
+    '<div class="input-group"><label>Reason</label><select id="sendReason"><option>Loan disbursement</option><option>Year-end withdrawal</option><option>Emergency withdrawal</option><option>Other</option></select></div>' +
+    '<div class="input-group"><label>MTN MoMo Number</label><input type="tel" id="sendPhone" value="'+phone+'" placeholder="e.g. 0771234567"/></div>' +
+    '<div class="modal-actions">' +
+    '<button class="btn btn-outline" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" style="background:#22c55e;border:none;font-weight:700;" onclick="submitSendMoney('+memberId+')">&#x1F4B8; Send Now</button>' +
+    '</div>'
+  );
+}
+async function submitSendMoney(memberId) {
+  var amount = parseInt(document.getElementById('sendAmount').value);
+  var phone = document.getElementById('sendPhone').value.trim();
+  var reason = document.getElementById('sendReason').value;
+  var m = appData.members.find(function(x){return x.id===memberId;});
+  if(!amount||amount<1000){showToast('Enter a valid amount');return;}
+  if(!phone||phone.length<10){showToast('Enter a valid MTN number');return;}
+  var btn = document.querySelector('.modal-box .btn-primary');
+  if(btn){btn.textContent='Sending...';btn.disabled=true;}
+  try {
+    var res = await fetch(MOMO_BACKEND+'/pay/send',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({amount:amount,phone:phone,memberId:String(memberId),memberName:m.name,reason:reason})});
+    var data = await res.json();
+    if(data.success) {
+      addNotification(memberId,'&#x1F4B8; Payment Received','MAPSAA sent UGX '+amount.toLocaleString()+' to your MoMo for: '+reason);
+      saveData(); closeModal();
+      showToast('UGX '+amount.toLocaleString()+' sent to '+m.firstName+'!');
+    } else {
+      if(btn){btn.textContent='Send Now';btn.disabled=false;}
+      showToast('Failed: '+(data.error&&data.error.message?data.error.message:'Please try again.'));
+    }
+  } catch(e) {
+    if(btn){btn.textContent='Send Now';btn.disabled=false;}
+    showToast('Could not reach payment server.');
+  }
+}
+
+// ========== YEAR-END PAYOUT ==========
+var _payoutRows = [];
+function showYearEndPayoutModal() {
+  var loansActive = appData.featuresActivated;
+  var members = appData.members.filter(function(m){return m.active;});
+  var rows = members.map(function(m) {
+    var savings = memberTotal(m);
+    var loanBal = loansActive ? (m.loans||[]).filter(function(l){return l.status==='active'||l.status==='overdue';}).reduce(function(s,l) {
+      var rate = l.interestRate || getPointTier(m).rate;
+      var owed = l.amount + (l.amount * rate / 100);
+      return s + Math.max(0, owed - (l.paidAmount||0));
+    }, 0) : 0;
+    var payout = Math.max(0, savings - loanBal);
+    var phone = m.momoNumber || (m.contact ? '0'+m.contact : '');
+    var hasPhone = phone && phone.length >= 10;
+    return {m:m, savings:savings, loanBal:loanBal, payout:payout, phone:phone, hasPhone:hasPhone};
+  }).filter(function(r){return r.savings>0;});
+  _payoutRows = rows;
+  var totalPayout = rows.reduce(function(s,r){return s+r.payout;},0);
+  var missingNumbers = rows.filter(function(r){return !r.hasPhone;}).length;
+  var tableRows = rows.map(function(r) {
+    return '<tr>' +
+      '<td style="padding:8px;font-weight:500;">'+r.m.name+'</td>' +
+      (loansActive ? '<td style="padding:8px;font-size:12px;color:var(--text-muted);">'+fmt(r.savings)+(r.loanBal>0?'<br><span style="color:#dc2626;">- '+fmt(r.loanBal)+'</span>':'')+'</td>' : '') +
+      '<td style="padding:8px;"><input type="number" id="payout-amt-'+r.m.id+'" value="'+r.payout+'" style="width:110px;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;"></td>' +
+      '<td style="padding:8px;"><input type="tel" id="payout-phone-'+r.m.id+'" value="'+r.phone+'" placeholder="07xxxxxxxx" style="width:125px;padding:5px;border-radius:6px;border:1px solid '+(r.hasPhone?'var(--border)':'rgba(220,38,38,0.5)')+';background:var(--input-bg);color:var(--text);font-size:13px;">'+(r.hasPhone?'':'<span style="color:#dc2626;font-size:11px;"> Missing</span>')+'</td>' +
+      '</tr>';
+  }).join('');
+  openModal('<div class="modal-title">Year-End Payout</div>' +
+    '<div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--text-muted);">' +
+    (loansActive?'Outstanding loan balances have been deducted. ':'') +
+    'Review and edit before sending.' +
+    (missingNumbers>0?'<br><span style="color:#dc2626;font-weight:600;">'+missingNumbers+' member(s) missing MoMo number.</span>':'') + '</div>' +
+    '<div style="overflow-x:auto;margin-bottom:14px;"><table style="width:100%;border-collapse:collapse;">' +
+    '<thead><tr style="border-bottom:1px solid var(--border);">' +
+    '<th style="padding:8px;text-align:left;font-size:12px;color:var(--text-muted);">Member</th>' +
+    (loansActive?'<th style="padding:8px;text-align:left;font-size:12px;color:var(--text-muted);">Savings/Loan</th>':'') +
+    '<th style="padding:8px;text-align:left;font-size:12px;color:var(--text-muted);">Payout (UGX)</th>' +
+    '<th style="padding:8px;text-align:left;font-size:12px;color:var(--text-muted);">MoMo Number</th>' +
+    '</tr></thead><tbody>'+tableRows+'</tbody>' +
+    '<tfoot><tr style="border-top:2px solid var(--border);"><td style="padding:8px;font-weight:700;" colspan="'+(loansActive?2:1)+'">Total</td><td style="padding:8px;font-weight:700;color:var(--gold);">'+fmt(totalPayout)+'</td><td></td></tr></tfoot>' +
+    '</table></div>' +
+    '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px;">' +
+    '<div style="font-weight:600;font-size:13px;margin-bottom:8px;">After payout:</div>' +
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:6px;"><input type="radio" name="payoutAction" value="archive" checked> Archive this year & reset savings to zero</label>' +
+    '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;"><input type="radio" name="payoutAction" value="keep"> Keep savings records as they are</label>' +
+    '</div>' +
+    '<div style="display:flex;gap:10px;"><button class="btn btn-outline" style="flex:1" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" style="flex:1;background:linear-gradient(135deg,#c17f24,#f5a623);color:#1a1a1a;border:none;font-weight:700;" onclick="confirmYearEndPayout()">Send Payouts</button></div>');
+}
+async function confirmYearEndPayout() {
+  var action = document.querySelector('input[name="payoutAction"]:checked').value;
+  var rows = _payoutRows;
+  var payouts = [], skipped = 0;
+  rows.forEach(function(r) {
+    var amtEl=document.getElementById('payout-amt-'+r.m.id);
+    var phoneEl=document.getElementById('payout-phone-'+r.m.id);
+    if(!amtEl||!phoneEl) return;
+    var amount=parseInt(amtEl.value), phone=phoneEl.value.trim();
+    if(!phone||phone.length<10){skipped++;return;}
+    if(!amount||amount<=0) return;
+    payouts.push({m:r.m, amount:amount, phone:phone, loanBal:r.loanBal||0});
+  });
+  if(payouts.length===0){showToast('No valid payouts to send.');return;}
+  var btn=document.querySelector('.modal-box .btn-primary:last-child');
+  if(btn){btn.textContent='Sending...';btn.disabled=true;}
+  var sent=0, failed=0;
+  for(var i=0;i<payouts.length;i++) {
+    var p=payouts[i];
+    try {
+      var res=await fetch(MOMO_BACKEND+'/pay/send',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({amount:p.amount,phone:p.phone,memberId:String(p.m.id),memberName:p.m.name,reason:'Year-end savings withdrawal'})});
+      var data=await res.json();
+      if(data.success){
+        sent++;
+        p.m.momoNumber=p.phone;
+        var note=p.loanBal>0?' (after UGX '+p.loanBal.toLocaleString()+' loan deduction)':'';
+        addNotification(p.m.id,'Year-End Payout Sent!','UGX '+p.amount.toLocaleString()+' sent to your MoMo ('+p.phone+')'+note+'. Well done! &#x1F389;');
+      } else { failed++; addNotification(p.m.id,'Payout Failed','Your payout could not be processed. Contact admin.'); }
+    } catch(e) { failed++; }
+  }
+  if(action==='archive') {
+    var year=new Date().getFullYear();
+    if(!appData.yearArchives) appData.yearArchives=[];
+    var snap=appData.members.filter(function(m){return m.active;}).map(function(m){return {id:m.id,name:m.name,savings:JSON.parse(JSON.stringify(m.savings)),totalSavings:memberTotal(m)};});
+    appData.yearArchives.push({year:year,members:snap,payoutDate:Date.now()});
+    appData.members.forEach(function(m){if(!m.active) return; Object.keys(m.savings).forEach(function(mo){m.savings[mo]=[0,0,0,0];});});
+  }
+  saveData(); closeModal(); navigateTo('savings');
+  showToast(sent+' payout(s) sent'+(skipped>0?', '+skipped+' skipped':'')+( failed>0?', '+failed+' failed':'')+'.');
+}
+
+// ========== MEMBER MOMO NUMBER ==========
+function showUpdateMoMoModal() {
+  var m=appData.members.find(function(x){return x.id===currentUser.memberId;});
+  openModal('<div class="modal-title">Update My MoMo Number</div>' +
+    '<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">This number will be used for year-end payouts.</div>' +
+    '<div class="input-group"><label>MTN MoMo Number</label><input id="newMomo" type="tel" placeholder="e.g. 0771234567" value="'+(m.momoNumber||'0'+m.contact)+'"></div>' +
+    '<div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveMoMoNumber()">Save</button></div>');
+}
+function saveMoMoNumber() {
+  var val=document.getElementById('newMomo').value.trim();
+  if(!val||val.length<10){showToast('Enter a valid MTN number');return;}
+  var m=appData.members.find(function(x){return x.id===currentUser.memberId;});
+  m.momoNumber=val; saveData(); closeModal(); showToast('MoMo number updated!');
+}
 // ========== CO-ADMIN MANAGEMENT ==========
 function appointCoAdmin() {
   const memberId = parseInt(document.getElementById('newCoAdminMember').value);
@@ -3312,9 +3756,14 @@ function getMemberPoints(m) { return m.points || 0; }
 
 function getPointTier(m) {
   const pts = getMemberPoints(m);
-  if (pts >= 601) return { name: 'Diamond', icon: '💎', rate: 3, color: '#4ECDC4' };
-  if (pts >= 301) return { name: 'Silver',  icon: '🥈', rate: 4, color: '#A8B8C8' };
-  return             { name: 'Bronze',  icon: '🥉', rate: 5, color: '#CD7F32' };
+  const tiers = (appData&&appData.loanSettings&&appData.loanSettings.tiers) ? appData.loanSettings.tiers : [
+    {name:'Bronze', icon:'🥉', minPts:0,   maxPts:400,   rate:6, color:'#CD7F32', multiplier:2},
+    {name:'Silver', icon:'🥈', minPts:401, maxPts:600,   rate:5, color:'#A8B8C8', multiplier:2.5},
+    {name:'Gold',   icon:'🥇', minPts:601, maxPts:750,   rate:4, color:'#FFD700', multiplier:3},
+    {name:'Diamond',icon:'💎', minPts:751, maxPts:99999, rate:3, color:'#4ECDC4', multiplier:4}
+  ];
+  for (let i=tiers.length-1; i>=0; i--) { if (pts>=tiers[i].minPts) return tiers[i]; }
+  return tiers[0];
 }
 
 function getInterestRate(m) { return getPointTier(m).rate; }
@@ -3455,7 +3904,7 @@ function renderAdminPoints() {
               return `
                 <tr>
                   <td style="color:var(--text-muted)">${i+1}</td>
-                  <td><div style="display:flex;align-items:center;gap:8px"><div class="member-list-avatar" style="width:30px;height:30px;font-size:11px">${initials(m.name)}</div><span style="font-weight:500">${m.name}</span></div></td>
+                  <td><div style="display:flex;align-items:center;gap:8px"><div class="member-list-avatar" style="width:30px;height:30px;font-size:11px">${initials(m.name)}</div><span style="font-weight:500">${m.name}</span><div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Last login: ${m.lastLogin ? formatLastSeen(m.lastLogin) : 'Never'}</div></div></td>
                   <td><strong style="color:var(--gold);font-size:15px">${pts}</strong></td>
                   <td><span style="color:${tier.color};font-weight:600">${tier.icon} ${tier.name}</span></td>
                   <td><strong style="color:${tier.name==='Diamond'?'var(--success)':tier.name==='Silver'?'var(--accent)':'var(--text)'}">${tier.rate}%</strong>/month</td>
@@ -3484,8 +3933,8 @@ function renderAdminPoints() {
 
 
 function getMembershipMonths(m) {
-  if (!m.joinDate) return 6;
-  return Math.floor((Date.now() - m.joinDate) / (30 * 24 * 60 * 60 * 1000));
+  const startDate = (appData&&appData.activationDate) ? appData.activationDate : (m.joinDate||Date.now());
+  return Math.floor((Date.now() - startDate) / (30*24*60*60*1000));
 }
 
 function getMemberTotalSavings(m) {
@@ -3493,16 +3942,13 @@ function getMemberTotalSavings(m) {
 }
 
 function getLoanLimit(m) {
-  const savings  = getMemberTotalSavings(m);
-  const points   = getMemberPoints(m);
-  const months   = getMembershipMonths(m);
-  const pointBonus = points * 200;
-  // Under 3 months — no loans at all
-  if (months < 3) return 0;
-  // 3–11 months — 1× savings + point bonus
-  if (months < 12) return savings + pointBonus;
-  // 12+ months — 2× savings + point bonus (full limit)
-  return (savings * 2) + pointBonus;
+  const savings = getMemberTotalSavings(m);
+  const months  = getMembershipMonths(m);
+  const ls = (appData&&appData.loanSettings) ? appData.loanSettings : {minMonths:3};
+  const tier = getPointTier(m);
+  const mult = tier.multiplier || 2;
+  if (months < (ls.minMonths||3)) return 0;
+  return savings * mult;
 }
 
 function getLoanEligibilityStatus(m) {
