@@ -335,8 +335,23 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: 'Not found' }));
 });
 
-server.listen(CONFIG.port, () => {
+server.listen(CONFIG.port, async () => {
   console.log(`MAPSAA Backend running on port ${CONFIG.port}`);
+  // Auto-run setup if credentials not set
+  if (!CONFIG.collections.userId || !CONFIG.disbursements.userId) {
+    console.log('Running auto-setup...');
+    try {
+      const collResult = await setupApiUser('collection', CONFIG.collections.subscriptionKey);
+      const disbResult = await setupApiUser('disbursement', CONFIG.disbursements.subscriptionKey);
+      if (collResult) { CONFIG.collections.userId = collResult.userId; CONFIG.collections.apiSecret = collResult.apiSecret; }
+      if (disbResult) { CONFIG.disbursements.userId = disbResult.userId; CONFIG.disbursements.apiSecret = disbResult.apiSecret; }
+      console.log('Auto-setup complete!');
+      console.log('COLL_USER_ID=' + CONFIG.collections.userId);
+      console.log('COLL_SECRET=' + CONFIG.collections.apiSecret);
+      console.log('DISB_USER_ID=' + CONFIG.disbursements.userId);
+      console.log('DISB_SECRET=' + CONFIG.disbursements.apiSecret);
+    } catch(e) { console.error('Auto-setup failed:', e.message); }
+  }
   console.log('Endpoints:');
   console.log('  POST /setup          - Run once to initialize API users');
   console.log('  POST /pay/request    - Request payment from member');
