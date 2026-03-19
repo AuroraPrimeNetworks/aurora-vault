@@ -81,7 +81,7 @@ async function setupApiUser(product, subKey) {
   // Step 1: Create API user
   const createOptions = {
     hostname: CONFIG.baseUrl,
-    path: `/${product}/v1_0/apiuser`,
+    path: `/v1_0/apiuser`,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -89,7 +89,7 @@ async function setupApiUser(product, subKey) {
       'Ocp-Apim-Subscription-Key': subKey,
     }
   };
-  const createRes = await makeRequest(createOptions, { providerCallbackHost: 'webhook.site' });
+  const createRes = await makeRequest(createOptions, { providerCallbackHost: 'https://mapsaa-vault-production.up.railway.app' });
   if (createRes.status !== 201) {
     console.error(`Failed to create ${product} user:`, createRes);
     return null;
@@ -98,7 +98,7 @@ async function setupApiUser(product, subKey) {
   // Step 2: Get API secret
   const secretOptions = {
     hostname: CONFIG.baseUrl,
-    path: `/${product}/v1_0/apiuser/${userId}/apikey`,
+    path: `/v1_0/apiuser/${userId}/apikey`,
     method: 'POST',
     headers: { 'Ocp-Apim-Subscription-Key': subKey }
   };
