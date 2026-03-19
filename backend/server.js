@@ -330,6 +330,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // MTN MoMo Callback - called by MTN when payment is successful
+  if (url === '/callback' && req.method === 'POST') {
+    const body = await parseBody(req);
+    console.log('MTN Callback received:', JSON.stringify(body));
+    // MTN sends payment confirmation here
+    // The app polls /pay/status/:id to check payment status
+    res.writeHead(200, headers);
+    res.end(JSON.stringify({ success: true, message: 'Callback received' }));
+    return;
+  }
+
   // 404
   res.writeHead(404, headers);
   res.end(JSON.stringify({ error: 'Not found' }));
