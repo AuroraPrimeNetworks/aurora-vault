@@ -501,6 +501,18 @@
     <button class="btn-login" onclick="doLogin()">Sign In</button>
     <div class="login-error" id="loginError">Invalid email or password. Please try again.</div>
   </div>
+  <!-- Login page footer -->
+  <div style="position:absolute;bottom:20px;left:0;right:0;text-align:center;font-size:11px;color:rgba(255,255,255,0.25);line-height:1.9;">
+    <div>Powered by <strong style="color:rgba(201,168,76,0.5);">Aurora Vault</strong> &nbsp;|&nbsp; Version 1.0</div>
+    <div>&copy; 2026 Samuel Junior Okuny. All rights reserved.</div>
+    <div style="margin-top:4px;">
+      <a href="#" onclick="showPrivacyPolicy()" style="color:rgba(201,168,76,0.4);text-decoration:none;">Privacy Policy</a>
+      &nbsp;&middot;&nbsp;
+      <a href="#" onclick="showTermsOfService()" style="color:rgba(201,168,76,0.4);text-decoration:none;">Terms of Service</a>
+      &nbsp;&middot;&nbsp;
+      <a href="mailto:samueljuniorokuny@outlook.com" style="color:rgba(201,168,76,0.4);text-decoration:none;">Contact</a>
+    </div>
+  </div>
 </div>
 
 <!-- ===== MAIN APP ===== -->
@@ -526,6 +538,18 @@
         </div>
       </div>
       <button class="btn-logout" onclick="doLogout()">Sign Out</button>
+      <!-- Sidebar footer -->
+      <div style="padding:12px 16px;border-top:1px solid var(--border);margin-top:8px;text-align:center;font-size:10px;color:var(--text-muted);line-height:1.9;">
+        <div>Powered by <strong style="color:var(--gold);">Aurora Vault</strong> &nbsp;|&nbsp; v1.0</div>
+        <div style="margin-top:2px;">
+          <a href="#" onclick="showPrivacyPolicy()" style="color:var(--text-muted);text-decoration:none;">Privacy Policy</a>
+          &nbsp;&middot;&nbsp;
+          <a href="#" onclick="showTermsOfService()" style="color:var(--text-muted);text-decoration:none;">Terms</a>
+          &nbsp;&middot;&nbsp;
+          <a href="mailto:samueljuniorokuny@outlook.com" style="color:var(--text-muted);text-decoration:none;">Contact</a>
+        </div>
+        <div style="margin-top:2px;">&copy; 2026 Samuel Junior Okuny</div>
+      </div>
     </div>
   </aside>
 
@@ -2792,6 +2816,38 @@ function renderLockedPage(title, msg, goTo) {
     '<div style="font-size:14px;color:var(--text-muted);max-width:300px;line-height:1.7;margin-bottom:20px;">' + msg + '</div>' +
     (goTo ? '<button class="btn btn-primary" onclick="navigateTo(&#x27;' + goTo + '&#x27;)">Go to Settings</button>' : '') +
     '</div>';
+}
+
+// ========== LEGAL MODALS ==========
+function showPrivacyPolicy() {
+  var html = '<div class="modal-title">&#x1F512; Privacy Policy</div>';
+  html += '<div style="font-size:13px;color:var(--text-muted);line-height:1.9;max-height:60vh;overflow-y:auto;padding-right:8px;">';
+  html += '<p style="color:var(--text);font-weight:600;margin-bottom:8px;">Effective Date: January 1, 2026</p>';
+  html += '<p><strong style="color:var(--text);">1. Data We Collect</strong><br>MAPSAA Vault collects member names, contact details, email addresses, savings records, and loan information solely for managing group savings.</p>';
+  html += '<p><strong style="color:var(--text);">2. How We Use Your Data</strong><br>Your data is used exclusively to manage group savings, process payments, track loans, and communicate group updates. We do not sell or share your data with third parties.</p>';
+  html += '<p><strong style="color:var(--text);">3. Data Storage</strong><br>All data is securely stored on Google Firebase servers. MTN Mobile Money transactions are processed through MTN secure payment infrastructure.</p>';
+  html += '<p><strong style="color:var(--text);">4. Data Access</strong><br>Only the group admin and authorized co-admins can access member financial data. Members can only view their own savings and loan information.</p>';
+  html += '<p><strong style="color:var(--text);">5. Your Rights</strong><br>You have the right to request access to your personal data, request corrections, or request deletion of your account by contacting the admin.</p>';
+  html += '<p><strong style="color:var(--text);">6. Contact</strong><br>For privacy concerns, contact: samueljuniorokuny@outlook.com</p>';
+  html += '</div>';
+  html += '<div style="margin-top:16px;"><button class="btn btn-primary" style="width:100%;" onclick="closeModal()">Close</button></div>';
+  openModal(html);
+}
+
+function showTermsOfService() {
+  var html = '<div class="modal-title">&#x1F4DC; Terms of Service</div>';
+  html += '<div style="font-size:13px;color:var(--text-muted);line-height:1.9;max-height:60vh;overflow-y:auto;padding-right:8px;">';
+  html += '<p style="color:var(--text);font-weight:600;margin-bottom:8px;">Effective Date: January 1, 2026</p>';
+  html += '<p><strong style="color:var(--text);">1. Acceptance</strong><br>By using MAPSAA Vault, you agree to these terms. If you do not agree, please discontinue use immediately.</p>';
+  html += '<p><strong style="color:var(--text);">2. Purpose</strong><br>MAPSAA Vault is a digital platform for managing group savings, loans, and payments for registered savings groups.</p>';
+  html += '<p><strong style="color:var(--text);">3. Member Responsibilities</strong><br>Members are responsible for maintaining accurate contact and payment information, making timely savings contributions, and repaying loans on schedule.</p>';
+  html += '<p><strong style="color:var(--text);">4. Payments</strong><br>All payments are processed through MTN Mobile Money. MAPSAA Vault is not responsible for delays or failures caused by MTN payment infrastructure.</p>';
+  html += '<p><strong style="color:var(--text);">5. Limitation of Liability</strong><br>MAPSAA Vault and its developer (Samuel Junior Okuny) are not liable for any financial losses resulting from system errors, payment failures, or misuse of the platform.</p>';
+  html += '<p><strong style="color:var(--text);">6. Changes</strong><br>These terms may be updated at any time. Continued use of the platform constitutes acceptance of updated terms.</p>';
+  html += '<p><strong style="color:var(--text);">7. Contact</strong><br>For questions, contact: samueljuniorokuny@outlook.com</p>';
+  html += '</div>';
+  html += '<div style="margin-top:16px;"><button class="btn btn-primary" style="width:100%;" onclick="closeModal()">Close</button></div>';
+  openModal(html);
 }
 
 // ========== FEATURE ACTIVATION ==========
