@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>APN Admin Panel</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+<style>
+:root{--gold:#C9A84C;--gold-dark:#9A7A2E;--deep:#04091E;--deep2:#080F28;--deep3:#0D1A3A;--text:#F0EDE6;--text-muted:#8A9BB0;--border:rgba(201,168,76,0.15);--card:rgba(8,15,40,0.9);--danger:#E05C5C;--success:#22c55e;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:"Outfit",sans-serif;background:var(--deep);color:var(--text);min-height:100vh;}
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse 70% 50% at 50% 40%,rgba(201,168,76,0.08) 0%,transparent 70%);}
+.login-card{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:44px;width:100%;max-width:400px;text-align:center;}
+.login-card img{height:80px;width:auto;margin:0 auto 20px;display:block;}
+.login-title{font-family:"Cormorant Garamond",serif;font-size:26px;font-weight:600;color:var(--gold);margin-bottom:4px;}
+.login-sub{font-size:12px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:28px;}
+.fg{margin-bottom:14px;text-align:left;}
+.fg label{display:block;font-size:11px;color:var(--text-muted);margin-bottom:6px;letter-spacing:1px;text-transform:uppercase;}
+.fg input{width:100%;padding:12px 14px;background:var(--deep3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;outline:none;font-family:"Outfit",sans-serif;}
+.fg input:focus{border-color:var(--gold);}
+.btn-login{width:100%;padding:13px;background:linear-gradient(135deg,var(--gold),var(--gold-dark));color:#04091E;font-size:15px;font-weight:700;border:none;border-radius:10px;cursor:pointer;}
+.login-error{color:var(--danger);font-size:13px;margin-top:10px;padding:10px;background:rgba(224,92,92,0.1);border-radius:8px;border:1px solid rgba(224,92,92,0.3);display:none;}
+#app{display:none;min-height:100vh;}
+.sidebar{position:fixed;top:0;left:0;bottom:0;width:240px;background:var(--deep2);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:50;}
+.sbl{padding:18px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+.sbl img{height:36px;width:auto;}
+.sbl-t{font-family:"Cormorant Garamond",serif;font-size:15px;color:var(--gold);font-weight:600;}
+.sbl-s{font-size:9px;color:var(--text-muted);letter-spacing:1.5px;text-transform:uppercase;}
+.snav{flex:1;padding:12px;overflow-y:auto;}
+.ns{font-size:9px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;padding:8px 10px;margin-top:6px;}
+.ni{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text-muted);transition:all 0.2s;margin-bottom:2px;border-left:3px solid transparent;}
+.ni:hover{background:rgba(201,168,76,0.08);color:var(--text);}
+.ni.active{background:rgba(201,168,76,0.12);color:var(--gold);border-left-color:var(--gold);}
+.sbot{padding:12px;border-top:1px solid var(--border);}
+.btn-logout{width:100%;padding:9px;background:rgba(224,92,92,0.1);border:1px solid rgba(224,92,92,0.3);border-radius:8px;color:var(--danger);font-size:12px;cursor:pointer;}
+.main{margin-left:240px;padding:28px;min-height:100vh;}
+.pt{font-family:"Cormorant Garamond",serif;font-size:28px;font-weight:600;margin-bottom:4px;}
+.ps{font-size:13px;color:var(--text-muted);margin-bottom:24px;}
+.sg{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;}
+.sc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;}
+.sv{font-family:"Cormorant Garamond",serif;font-size:28px;font-weight:700;color:var(--gold);}
+.sl{font-size:12px;color:var(--text-muted);margin-top:4px;}
+.tw{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px;}
+.th{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.tt{font-family:"Cormorant Garamond",serif;font-size:18px;font-weight:600;}
+table{width:100%;border-collapse:collapse;}
+th{padding:10px 16px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);background:rgba(255,255,255,0.02);}
+td{padding:12px 16px;font-size:13px;border-bottom:1px solid rgba(255,255,255,0.04);}
+tr:last-child td{border:none;}
+.ox{overflow-x:auto;}
+.btn{padding:8px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text);font-family:"Outfit",sans-serif;}
+.bp{background:linear-gradient(135deg,var(--gold),var(--gold-dark));color:#04091E;border:none;}
+.bd{background:rgba(224,92,92,0.1);color:var(--danger);border-color:rgba(224,92,92,0.3);}
+.bs{background:rgba(34,197,94,0.1);color:var(--success);border-color:rgba(34,197,94,0.3);}
+.bsm{padding:5px 10px;font-size:11px;}
+.badge{display:inline-flex;padding:3px 8px;border-radius:100px;font-size:10px;font-weight:600;}
+.bg-s{background:rgba(34,197,94,0.15);color:var(--success);border:1px solid rgba(34,197,94,0.3);}
+.bg-d{background:rgba(224,92,92,0.15);color:var(--danger);border:1px solid rgba(224,92,92,0.3);}
+.bg-g{background:rgba(201,168,76,0.15);color:var(--gold);border:1px solid var(--border);}
+.bg-m{background:rgba(255,255,255,0.05);color:var(--text-muted);border:1px solid var(--border);}
+.fw{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:20px;}
+.fw .fg{margin-bottom:14px;}
+.fw label{display:block;font-size:11px;color:var(--text-muted);margin-bottom:6px;letter-spacing:1px;text-transform:uppercase;}
+.fw input,.fw textarea,.fw select{width:100%;padding:10px 14px;background:var(--deep3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;font-family:"Outfit",sans-serif;}
+.fw input:focus,.fw textarea:focus,.fw select:focus{border-color:var(--gold);}
+.fw textarea{resize:vertical;min-height:100px;}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.mo{position:fixed;inset:0;background:rgba(0,0,0,0.8);backdrop-filter:blur(8px);z-index:200;display:none;align-items:center;justify-content:center;padding:20px;}
+.mo.open{display:flex;}
+.mb{background:var(--deep2);border:1px solid var(--border);border-radius:16px;padding:28px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;position:relative;}
+.mc{position:absolute;top:12px;right:12px;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;font-size:13px;}
+.mt{font-family:"Cormorant Garamond",serif;font-size:22px;font-weight:600;margin-bottom:16px;}
+.ma{display:flex;gap:10px;margin-top:16px;}
+.toast{position:fixed;bottom:20px;right:20px;padding:12px 18px;background:var(--deep3);border:1px solid var(--border);border-radius:10px;font-size:13px;z-index:9999;transform:translateY(80px);opacity:0;transition:all 0.3s;}
+.toast.show{transform:translateY(0);opacity:1;}
+.empty{text-align:center;padding:40px;color:var(--text-muted);}
+.bv{background:linear-gradient(135deg,var(--gold),var(--gold-dark));color:#04091E;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;margin-bottom:12px;}
+</style>
+</head>
+<body>
+<div id="loginPage" style="display:flex;">
+  <div class="login-wrap">
+    <div class="login-card">
+      <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2ODAiIGhlaWdodD0iNTYwIiB2aWV3Qm94PSIwIDAgNjgwIDU2MCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMwNDA5MUUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMDgwRjI4Ii8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJnb2xkViIgeDE9IjAiIHkxPSIwIiB4Mj0iMCIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiAgIHN0b3AtY29sb3I9IiNGRkY4RDAiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIyMiUiICBzdG9wLWNvbG9yPSIjRjVDODQyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iNTIlIiAgc3RvcC1jb2xvcj0iI0I4NzgwRSIvPgogICAgICA8c3RvcCBvZmZzZXQ9Ijc4JSIgIHN0b3AtY29sb3I9IiNFOEE4MjAiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjN0E0ODA4Ii8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJnb2xkSCIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjAiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiAgIHN0b3AtY29sb3I9IiM3QTQ4MDgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIzNSUiICBzdG9wLWNvbG9yPSIjRjVDODQyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iNTUlIiAgc3RvcC1jb2xvcj0iI0ZGRjhEMCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiM4QTU4MTAiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9InJpbmdHb2xkIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiICAgc3RvcC1jb2xvcj0iI0ZGRjhEMCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjMwJSIgIHN0b3AtY29sb3I9IiNDODg5MUUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSI2MCUiICBzdG9wLWNvbG9yPSIjRjVDODQyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzdBNDgwOCIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxyYWRpYWxHcmFkaWVudCBpZD0iY2lyY2xlRmlsbCIgY3g9IjUwJSIgY3k9IjQ1JSIgcj0iNTUlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgICBzdG9wLWNvbG9yPSIjMTUyMDQwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzA0MDkxRSIvPgogICAgPC9yYWRpYWxHcmFkaWVudD4KICAgIDxyYWRpYWxHcmFkaWVudCBpZD0iaGFsbyIgY3g9IjUwJSIgY3k9IjUwJSIgcj0iNTAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgICBzdG9wLWNvbG9yPSIjQzg4OTFFIiBzdG9wLW9wYWNpdHk9IjAuMTIiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjQzg4OTFFIiBzdG9wLW9wYWNpdHk9IjAiLz4KICAgIDwvcmFkaWFsR3JhZGllbnQ+CiAgICA8Y2xpcFBhdGggaWQ9ImlubmVyQ2xpcCI+CiAgICAgIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjIxOCIgcj0iMTM4Ii8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KCiAgPHJlY3Qgd2lkdGg9IjY4MCIgaGVpZ2h0PSI1NjAiIHJ4PSIxNiIgZmlsbD0idXJsKCNiZykiLz4KCiAgPGcgc3Ryb2tlPSJ1cmwoI2dvbGRIKSIgc3Ryb2tlLXdpZHRoPSIwLjkiIGZpbGw9Im5vbmUiIG9wYWNpdHk9IjAuNCI+CiAgICA8cGF0aCBkPSJNIDMwIDMwIEwgNjggMzAgTSAzMCAzMCBMIDMwIDY4Ii8+CiAgICA8cGF0aCBkPSJNIDY1MCAzMCBMIDYxMiAzMCBNIDY1MCAzMCBMIDY1MCA2OCIvPgogICAgPHBhdGggZD0iTSAzMCA1MzAgTCA2OCA1MzAgTSAzMCA1MzAgTCAzMCA0OTIiLz4KICAgIDxwYXRoIGQ9Ik0gNjUwIDUzMCBMIDYxMiA1MzAgTSA2NTAgNTMwIEwgNjUwIDQ5MiIvPgogIDwvZz4KICA8ZyBmaWxsPSJ1cmwoI2dvbGRWKSIgb3BhY2l0eT0iMC41Ij4KICAgIDxjaXJjbGUgY3g9IjMwIiAgY3k9IjMwIiAgcj0iMi41Ii8+CiAgICA8Y2lyY2xlIGN4PSI2NTAiIGN5PSIzMCIgIHI9IjIuNSIvPgogICAgPGNpcmNsZSBjeD0iMzAiICBjeT0iNTMwIiByPSIyLjUiLz4KICAgIDxjaXJjbGUgY3g9IjY1MCIgY3k9IjUzMCIgcj0iMi41Ii8+CiAgPC9nPgoKICA8Y2lyY2xlIGN4PSIzNDAiIGN5PSIyMTgiIHI9IjE1OCIgZmlsbD0idXJsKCNoYWxvKSIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjIxOCIgcj0iMTYyIiBmaWxsPSJub25lIiBzdHJva2U9InVybCgjcmluZ0dvbGQpIiBzdHJva2Utd2lkdGg9IjE4IiBvcGFjaXR5PSIwLjkiLz4KCiAgPGcgc3Ryb2tlPSIjMDQwOTFFIiBzdHJva2Utd2lkdGg9IjEuOCIgb3BhY2l0eT0iMC4zNSI+CiAgICA8bGluZSB4MT0iMzQwIiB5MT0iNTQiICB4Mj0iMzQwIiB5Mj0iNzIiLz4KICAgIDxsaW5lIHgxPSIzNDAiIHkxPSIzNjQiIHgyPSIzNDAiIHkyPSIzODIiLz4KICAgIDxsaW5lIHgxPSIxNzgiIHkxPSIyMTgiIHgyPSIxOTYiIHkyPSIyMTgiLz4KICAgIDxsaW5lIHgxPSI0ODQiIHkxPSIyMTgiIHgyPSI1MDIiIHkyPSIyMTgiLz4KICAgIDxsaW5lIHgxPSIyMjYiIHkxPSIxMDQiIHgyPSIyMzgiIHkyPSIxMTYiLz4KICAgIDxsaW5lIHgxPSI0NDIiIHkxPSIzMjAiIHgyPSI0NTQiIHkyPSIzMzIiLz4KICAgIDxsaW5lIHgxPSI0NTQiIHkxPSIxMDQiIHgyPSI0NDIiIHkyPSIxMTYiLz4KICAgIDxsaW5lIHgxPSIyMzgiIHkxPSIzMjAiIHgyPSIyMjYiIHkyPSIzMzIiLz4KICAgIDxsaW5lIHgxPSIxOTYiIHkxPSIxNTQiIHgyPSIyMDYiIHkyPSIxNjQiLz4KICAgIDxsaW5lIHgxPSI0NzQiIHkxPSIyNzIiIHgyPSI0ODQiIHkyPSIyODIiLz4KICAgIDxsaW5lIHgxPSI0ODQiIHkxPSIxNTQiIHgyPSI0NzQiIHkyPSIxNjQiLz4KICAgIDxsaW5lIHgxPSIyMDYiIHkxPSIyNzIiIHgyPSIxOTYiIHkyPSIyODIiLz4KICA8L2c+CgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjIxOCIgcj0iMTUyIiBmaWxsPSJub25lIiBzdHJva2U9InVybCgjcmluZ0dvbGQpIiBzdHJva2Utd2lkdGg9IjEiIG9wYWNpdHk9IjAuNiIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjIxOCIgcj0iMTUwIiBmaWxsPSJ1cmwoI2NpcmNsZUZpbGwpIi8+CiAgPGNpcmNsZSBjeD0iMzQwIiBjeT0iMjE4IiByPSIxNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0idXJsKCNnb2xkSCkiIHN0cm9rZS13aWR0aD0iMS4yIiBvcGFjaXR5PSIwLjU1Ii8+CgogIDx0ZXh0IHg9IjM0MyIgeT0iMjU2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iR2VvcmdpYSwgJ1RpbWVzIE5ldyBSb21hbicsIHNlcmlmIiBmb250LXNpemU9IjExMCIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzAwMCIgb3BhY2l0eT0iMC40NSIgbGV0dGVyLXNwYWNpbmc9Ii0yIiBjbGlwLXBhdGg9InVybCgjaW5uZXJDbGlwKSI+QVBOPC90ZXh0PgogIDx0ZXh0IHg9IjM0MCIgeT0iMjUzIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iR2VvcmdpYSwgJ1RpbWVzIE5ldyBSb21hbicsIHNlcmlmIiBmb250LXNpemU9IjExMCIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0idXJsKCNnb2xkVikiIGxldHRlci1zcGFjaW5nPSItMiIgY2xpcC1wYXRoPSJ1cmwoI2lubmVyQ2xpcCkiPkFQTjwvdGV4dD4KICA8dGV4dCB4PSIzNDAiIHk9IjI1MSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsICdUaW1lcyBOZXcgUm9tYW4nLCBzZXJpZiIgZm9udC1zaXplPSIxMTAiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9InVybCgjZ29sZEgpIiBvcGFjaXR5PSIwLjE4IiBsZXR0ZXItc3BhY2luZz0iLTIiIGNsaXAtcGF0aD0idXJsKCNpbm5lckNsaXApIj5BUE48L3RleHQ+CiAgPHRleHQgeD0iMzQwIiB5PSIyODYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJHZW9yZ2lhLCBzZXJpZiIgZm9udC1zaXplPSIxMSIgZmlsbD0iI0M4ODkxRSIgbGV0dGVyLXNwYWNpbmc9IjQiIG9wYWNpdHk9IjAuNyI+QVVST1JBIFBSSU1FIE5FVFdPUktTPC90ZXh0PgoKICA8bGluZSB4MT0iMTA4IiB5MT0iNDA2IiB4Mj0iNTcyIiB5Mj0iNDA2IiBzdHJva2U9InVybCgjZ29sZEgpIiBzdHJva2Utd2lkdGg9IjEiIG9wYWNpdHk9IjAuNSIvPgogIDxsaW5lIHgxPSIxNDAiIHkxPSI0MTAiIHgyPSI1NDAiIHkyPSI0MTAiIHN0cm9rZT0idXJsKCNnb2xkSCkiIHN0cm9rZS13aWR0aD0iMC40IiBvcGFjaXR5PSIwLjI1Ii8+CgogIDx0ZXh0IHg9IjM0MCIgeT0iNDQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iR2VvcmdpYSwgJ1RpbWVzIE5ldyBSb21hbicsIHNlcmlmIiBmb250LXNpemU9IjE3IiBmb250LXdlaWdodD0iNzAwIiBmaWxsPSJ1cmwoI2dvbGRIKSIgbGV0dGVyLXNwYWNpbmc9IjkiPkFVUk9SQSBQUklNRSBORVRXT1JLUzwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iMjQ2IiBjeT0iNDYwIiByPSIxLjgiIGZpbGw9IiNDODg5MUUiIG9wYWNpdHk9IjAuNiIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjQ2MCIgcj0iMS44IiBmaWxsPSIjQzg4OTFFIiBvcGFjaXR5PSIwLjYiLz4KICA8Y2lyY2xlIGN4PSI0MzQiIGN5PSI0NjAiIHI9IjEuOCIgZmlsbD0iI0M4ODkxRSIgb3BhY2l0eT0iMC42Ii8+CgogIDx0ZXh0IHg9IjM0MCIgeT0iNDc4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iR2VvcmdpYSwgc2VyaWYiIGZvbnQtc2l6ZT0iOS41IiBmaWxsPSIjQzg4OTFFIiBsZXR0ZXItc3BhY2luZz0iMy41IiBvcGFjaXR5PSIwLjg1Ij5DT05ORUNUSU5HIFZJU0lPTiBUTyBJTkZSQVNUUlVDVFVSRTwvdGV4dD4KCiAgPGxpbmUgeDE9IjEwOCIgeTE9IjQ5OCIgeDI9IjU3MiIgeTI9IjQ5OCIgc3Ryb2tlPSJ1cmwoI2dvbGRIKSIgc3Ryb2tlLXdpZHRoPSIwLjUiIG9wYWNpdHk9IjAuMiIvPgo8L3N2Zz4K" alt="APN"/>
+      <div class="login-title">APN Admin Panel</div>
+      <div class="login-sub">Content Management System</div>
+      <div class="fg"><label>Email</label><input type="email" id="loginEmail" placeholder="admin@auroraprimenetworks.com" onkeydown="if(event.key==='Enter')doLogin()"/></div>
+      <div class="fg"><label>Password</label><input type="password" id="loginPass" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"/></div>
+      <button class="btn-login" onclick="doLogin()">Sign In</button>
+      <div class="login-error" id="loginError">Invalid credentials.</div>
+      <div style="margin-top:16px;font-size:11px;color:var(--text-muted);">© 2026 Aurora Prime Networks (APN Ltd.)</div>
+    </div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+  <div class="sidebar">
+    <div class="sbl">
+      <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2ODAiIGhlaWdodD0iNTYwIiB2aWV3Qm94PSIwIDAgNjgwIDU2MCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiMwNDA5MUUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjMDgwRjI4Ii8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJnb2xkViIgeDE9IjAiIHkxPSIwIiB4Mj0iMCIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiAgIHN0b3AtY29sb3I9IiNGRkY4RDAiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIyMiUiICBzdG9wLWNvbG9yPSIjRjVDODQyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iNTIlIiAgc3RvcC1jb2xvcj0iI0I4NzgwRSIvPgogICAgICA8c3RvcCBvZmZzZXQ9Ijc4JSIgIHN0b3AtY29sb3I9IiNFOEE4MjAiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjN0E0ODA4Ii8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJnb2xkSCIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjAiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiAgIHN0b3AtY29sb3I9IiM3QTQ4MDgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIzNSUiICBzdG9wLWNvbG9yPSIjRjVDODQyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iNTUlIiAgc3RvcC1jb2xvcj0iI0ZGRjhEMCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiM4QTU4MTAiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9InJpbmdHb2xkIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiICAgc3RvcC1jb2xvcj0iI0ZGRjhEMCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjMwJSIgIHN0b3AtY29sb3I9IiNDODg5MUUiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSI2MCUiICBzdG9wLWNvbG9yPSIjRjVDODQyIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzdBNDgwOCIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxyYWRpYWxHcmFkaWVudCBpZD0iY2lyY2xlRmlsbCIgY3g9IjUwJSIgY3k9IjQ1JSIgcj0iNTUlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgICBzdG9wLWNvbG9yPSIjMTUyMDQwIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzA0MDkxRSIvPgogICAgPC9yYWRpYWxHcmFkaWVudD4KICAgIDxyYWRpYWxHcmFkaWVudCBpZD0iaGFsbyIgY3g9IjUwJSIgY3k9IjUwJSIgcj0iNTAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgICBzdG9wLWNvbG9yPSIjQzg4OTFFIiBzdG9wLW9wYWNpdHk9IjAuMTIiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjQzg4OTFFIiBzdG9wLW9wYWNpdHk9IjAiLz4KICAgIDwvcmFkaWFsR3JhZGllbnQ+CiAgICA8Y2xpcFBhdGggaWQ9ImlubmVyQ2xpcCI+CiAgICAgIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjIxOCIgcj0iMTM4Ii8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KCiAgPHJlY3Qgd2lkdGg9IjY4MCIgaGVpZ2h0PSI1NjAiIHJ4PSIxNiIgZmlsbD0idXJsKCNiZykiLz4KCiAgPGcgc3Ryb2tlPSJ1cmwoI2dvbGRIKSIgc3Ryb2tlLXdpZHRoPSIwLjkiIGZpbGw9Im5vbmUiIG9wYWNpdHk9IjAuNCI+CiAgICA8cGF0aCBkPSJNIDMwIDMwIEwgNjggMzAgTSAzMCAzMCBMIDMwIDY4Ii8+CiAgICA8cGF0aCBkPSJNIDY1MCAzMCBMIDYxMiAzMCBNIDY1MCAzMCBMIDY1MCA2OCIvPgogICAgPHBhdGggZD0iTSAzMCA1MzAgTCA2OCA1MzAgTSAzMCA1MzAgTCAzMCA0OTIiLz4KICAgIDxwYXRoIGQ9Ik0gNjUwIDUzMCBMIDYxMiA1MzAgTSA2NTAgNTMwIEwgNjUwIDQ5MiIvPgogIDwvZz4KICA8ZyBmaWxsPSJ1cmwoI2dvbGRWKSIgb3BhY2l0eT0iMC41Ij4KICAgIDxjaXJjbGUgY3g9IjMwIiAgY3k9IjMwIiAgcj0iMi41Ii8+CiAgICA8Y2lyY2xlIGN4PSI2NTAiIGN5PSIzMCIgIHI9IjIuNSIvPgogICAgPGNpcmNsZSBjeD0iMzAiICBjeT0iNTMwIiByPSIyLjUiLz4KICAgIDxjaXJjbGUgY3g9IjY1MCIgY3k9IjUzMCIgcj0iMi41Ii8+CiAgPC9nPgoKICA8Y2lyY2xlIGN4PSIzNDAiIGN5PSIyMTgiIHI9IjE1OCIgZmlsbD0idXJsKCNoYWxvKSIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjIxOCIgcj0iMTYyIiBmaWxsPSJub25lIiBzdHJva2U9InVybCgjcmluZ0dvbGQpIiBzdHJva2Utd2lkdGg9IjE4IiBvcGFjaXR5PSIwLjkiLz4KCiAgPGcgc3Ryb2tlPSIjMDQwOTFFIiBzdHJva2Utd2lkdGg9IjEuOCIgb3BhY2l0eT0iMC4zNSI+CiAgICA8bGluZSB4MT0iMzQwIiB5MT0iNTQiICB4Mj0iMzQwIiB5Mj0iNzIiLz4KICAgIDxsaW5lIHgxPSIzNDAiIHkxPSIzNjQiIHgyPSIzNDAiIHkyPSIzODIiLz4KICAgIDxsaW5lIHgxPSIxNzgiIHkxPSIyMTgiIHgyPSIxOTYiIHkyPSIyMTgiLz4KICAgIDxsaW5lIHgxPSI0ODQiIHkxPSIyMTgiIHgyPSI1MDIiIHkyPSIyMTgiLz4KICAgIDxsaW5lIHgxPSIyMjYiIHkxPSIxMDQiIHgyPSIyMzgiIHkyPSIxMTYiLz4KICAgIDxsaW5lIHgxPSI0NDIiIHkxPSIzMjAiIHgyPSI0NTQiIHkyPSIzMzIiLz4KICAgIDxsaW5lIHgxPSI0NTQiIHkxPSIxMDQiIHgyPSI0NDIiIHkyPSIxMTYiLz4KICAgIDxsaW5lIHgxPSIyMzgiIHkxPSIzMjAiIHgyPSIyMjYiIHkyPSIzMzIiLz4KICAgIDxsaW5lIHgxPSIxOTYiIHkxPSIxNTQiIHgyPSIyMDYiIHkyPSIxNjQiLz4KICAgIDxsaW5lIHgxPSI0NzQiIHkxPSIyNzIiIHgyPSI0ODQiIHkyPSIyODIiLz4KICAgIDxsaW5lIHgxPSI0ODQiIHkxPSIxNTQiIHgyPSI0NzQiIHkyPSIxNjQiLz4KICAgIDxsaW5lIHgxPSIyMDYiIHkxPSIyNzIiIHgyPSIxOTYiIHkyPSIyODIiLz4KICA8L2c+CgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjIxOCIgcj0iMTUyIiBmaWxsPSJub25lIiBzdHJva2U9InVybCgjcmluZ0dvbGQpIiBzdHJva2Utd2lkdGg9IjEiIG9wYWNpdHk9IjAuNiIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjIxOCIgcj0iMTUwIiBmaWxsPSJ1cmwoI2NpcmNsZUZpbGwpIi8+CiAgPGNpcmNsZSBjeD0iMzQwIiBjeT0iMjE4IiByPSIxNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0idXJsKCNnb2xkSCkiIHN0cm9rZS13aWR0aD0iMS4yIiBvcGFjaXR5PSIwLjU1Ii8+CgogIDx0ZXh0IHg9IjM0MyIgeT0iMjU2IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iR2VvcmdpYSwgJ1RpbWVzIE5ldyBSb21hbicsIHNlcmlmIiBmb250LXNpemU9IjExMCIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0iIzAwMCIgb3BhY2l0eT0iMC40NSIgbGV0dGVyLXNwYWNpbmc9Ii0yIiBjbGlwLXBhdGg9InVybCgjaW5uZXJDbGlwKSI+QVBOPC90ZXh0PgogIDx0ZXh0IHg9IjM0MCIgeT0iMjUzIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iR2VvcmdpYSwgJ1RpbWVzIE5ldyBSb21hbicsIHNlcmlmIiBmb250LXNpemU9IjExMCIgZm9udC13ZWlnaHQ9IjcwMCIgZmlsbD0idXJsKCNnb2xkVikiIGxldHRlci1zcGFjaW5nPSItMiIgY2xpcC1wYXRoPSJ1cmwoI2lubmVyQ2xpcCkiPkFQTjwvdGV4dD4KICA8dGV4dCB4PSIzNDAiIHk9IjI1MSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsICdUaW1lcyBOZXcgUm9tYW4nLCBzZXJpZiIgZm9udC1zaXplPSIxMTAiIGZvbnQtd2VpZ2h0PSI3MDAiIGZpbGw9InVybCgjZ29sZEgpIiBvcGFjaXR5PSIwLjE4IiBsZXR0ZXItc3BhY2luZz0iLTIiIGNsaXAtcGF0aD0idXJsKCNpbm5lckNsaXApIj5BUE48L3RleHQ+CiAgPHRleHQgeD0iMzQwIiB5PSIyODYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJHZW9yZ2lhLCBzZXJpZiIgZm9udC1zaXplPSIxMSIgZmlsbD0iI0M4ODkxRSIgbGV0dGVyLXNwYWNpbmc9IjQiIG9wYWNpdHk9IjAuNyI+QVVST1JBIFBSSU1FIE5FVFdPUktTPC90ZXh0PgoKICA8bGluZSB4MT0iMTA4IiB5MT0iNDA2IiB4Mj0iNTcyIiB5Mj0iNDA2IiBzdHJva2U9InVybCgjZ29sZEgpIiBzdHJva2Utd2lkdGg9IjEiIG9wYWNpdHk9IjAuNSIvPgogIDxsaW5lIHgxPSIxNDAiIHkxPSI0MTAiIHgyPSI1NDAiIHkyPSI0MTAiIHN0cm9rZT0idXJsKCNnb2xkSCkiIHN0cm9rZS13aWR0aD0iMC40IiBvcGFjaXR5PSIwLjI1Ii8+CgogIDx0ZXh0IHg9IjM0MCIgeT0iNDQwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iR2VvcmdpYSwgJ1RpbWVzIE5ldyBSb21hbicsIHNlcmlmIiBmb250LXNpemU9IjE3IiBmb250LXdlaWdodD0iNzAwIiBmaWxsPSJ1cmwoI2dvbGRIKSIgbGV0dGVyLXNwYWNpbmc9IjkiPkFVUk9SQSBQUklNRSBORVRXT1JLUzwvdGV4dD4KCiAgPGNpcmNsZSBjeD0iMjQ2IiBjeT0iNDYwIiByPSIxLjgiIGZpbGw9IiNDODg5MUUiIG9wYWNpdHk9IjAuNiIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjQ2MCIgcj0iMS44IiBmaWxsPSIjQzg4OTFFIiBvcGFjaXR5PSIwLjYiLz4KICA8Y2lyY2xlIGN4PSI0MzQiIGN5PSI0NjAiIHI9IjEuOCIgZmlsbD0iI0M4ODkxRSIgb3BhY2l0eT0iMC42Ii8+CgogIDx0ZXh0IHg9IjM0MCIgeT0iNDc4IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iR2VvcmdpYSwgc2VyaWYiIGZvbnQtc2l6ZT0iOS41IiBmaWxsPSIjQzg4OTFFIiBsZXR0ZXItc3BhY2luZz0iMy41IiBvcGFjaXR5PSIwLjg1Ij5DT05ORUNUSU5HIFZJU0lPTiBUTyBJTkZSQVNUUlVDVFVSRTwvdGV4dD4KCiAgPGxpbmUgeDE9IjEwOCIgeTE9IjQ5OCIgeDI9IjU3MiIgeTI9IjQ5OCIgc3Ryb2tlPSJ1cmwoI2dvbGRIKSIgc3Ryb2tlLXdpZHRoPSIwLjUiIG9wYWNpdHk9IjAuMiIvPgo8L3N2Zz4K" alt="APN"/>
+      <div><div class="sbl-t">APN Admin</div><div class="sbl-s">Content Manager</div></div>
+    </div>
+    <div class="snav">
+      <div class="ns">Overview</div>
+      <div class="ni active" onclick="nav('dashboard')"><span style="font-size:16px;width:22px;text-align:center;">📊</span> Dashboard</div>
+      <div class="ns">Content</div>
+      <div class="ni" onclick="nav('blog')"><span style="font-size:16px;width:22px;text-align:center;">📰</span> Blog Posts</div>
+      <div class="ni" onclick="nav('announcements')"><span style="font-size:16px;width:22px;text-align:center;">📢</span> Announcements</div>
+      <div class="ns">Company</div>
+      <div class="ni" onclick="nav('team')"><span style="font-size:16px;width:22px;text-align:center;">👥</span> Team Members</div>
+      <div class="ni" onclick="nav('products')"><span style="font-size:16px;width:22px;text-align:center;">🛍️</span> Products</div>
+      <div class="ni" onclick="nav('careers')"><span style="font-size:16px;width:22px;text-align:center;">💼</span> Job Listings</div>
+      <div class="ns">Website</div>
+      <div class="ni" onclick="nav('stats')"><span style="font-size:16px;width:22px;text-align:center;">📈</span> Homepage Stats</div>
+      <div class="ni" onclick="nav('settings')"><span style="font-size:16px;width:22px;text-align:center;">⚙️</span> Settings</div>
+    </div>
+    <div class="sbot"><button class="btn-logout" onclick="doLogout()">Sign Out</button></div>
+  </div>
+  <div class="main"><div id="content"></div></div>
+</div>
+
+<div class="mo" id="modal">
+  <div class="mb">
+    <button class="mc" onclick="closeMo()">✕</button>
+    <div id="mc"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var db = null;
+try { firebase.initializeApp({apiKey:'AIzaSyCBTNuOgalz4LFDa0213UgDMvKIjj5Cxco',authDomain:'mapsaa-piggy-bank.firebaseapp.com',projectId:'mapsaa-piggy-bank',storageBucket:'mapsaa-piggy-bank.firebasestorage.app',messagingSenderId:'551166980790',appId:'1:551166980790:web:73594a9094e5529ba6ec17'}); db=firebase.firestore(); } catch(e){}
+
+var ADMIN_EMAIL = localStorage.getItem('apn_admin_email') || 'samueljuniorokuny@outlook.com';
+var ADMIN_PASS = localStorage.getItem('apn_admin_pass') || 'APNAdmin2026';
+var D = {blog:[],team:[],products:[],careers:[],announcements:[],stats:{groups:'1+',members:'20+',savings:'UGX 1M+',founded:'2026'}};
+
+function doLogin() {
+  var e=document.getElementById('loginEmail').value.trim().toLowerCase();
+  var p=document.getElementById('loginPass').value;
+  var err=document.getElementById('loginError');
+  err.style.display='none';
+  ADMIN_EMAIL=(localStorage.getItem('apn_admin_email')||'samueljuniorokuny@outlook.com').toLowerCase();
+  ADMIN_PASS=localStorage.getItem('apn_admin_pass')||'APNAdmin2026';
+  if(!e||!p){err.textContent='Enter email and password.';err.style.display='block';return;}
+  if(e===ADMIN_EMAIL&&p===ADMIN_PASS){
+    document.getElementById('loginPage').style.display='none';
+    document.getElementById('app').style.display='block';
+    loadData();
+  } else { err.textContent='Invalid credentials.'; err.style.display='block'; }
+}
+
+function doLogout(){document.getElementById('app').style.display='none';document.getElementById('loginPage').style.display='flex';}
+
+async function loadData(){
+  try{ if(db){var doc=await db.collection('apn_site').doc('content').get(); if(doc.exists) D=Object.assign(D,doc.data());} }catch(e){}
+  nav('dashboard');
+}
+async function saveData(){try{if(db)await db.collection('apn_site').doc('content').set(D);}catch(e){}}
+
+function nav(page){
+  document.querySelectorAll('.ni').forEach(function(el){el.classList.remove('active');});
+  document.querySelectorAll('.ni').forEach(function(el){if(el.getAttribute('onclick')&&el.getAttribute('onclick').includes("'"+page+"'"))el.classList.add('active');});
+  var c=document.getElementById('content');
+  if(page==='dashboard') c.innerHTML=rDashboard();
+  else if(page==='blog') c.innerHTML=rBlog();
+  else if(page==='announcements') c.innerHTML=rAnnouncements();
+  else if(page==='team') c.innerHTML=rTeam();
+  else if(page==='products') c.innerHTML=rProducts();
+  else if(page==='careers') c.innerHTML=rCareers();
+  else if(page==='stats') c.innerHTML=rStats();
+  else if(page==='settings') c.innerHTML=rSettings();
+}
+
+function h(strings, ...vals) { return String.raw({raw:strings}, ...vals); }
+
+function rDashboard(){
+  var blog=D.blog||[], team=D.team||[], careers=D.careers||[], anns=D.announcements||[];
+  var active=anns.filter(function(a){return a.active;});
+  var openJobs=careers.filter(function(j){return j.open;});
+  var html='<div class="pt">Dashboard</div><div class="ps">APN Content Overview</div>';
+  html+='<div class="sg">';
+  html+='<div class="sc"><div class="sv">'+blog.length+'</div><div class="sl">Blog Posts</div></div>';
+  html+='<div class="sc"><div class="sv">'+team.length+'</div><div class="sl">Team Members</div></div>';
+  html+='<div class="sc"><div class="sv">'+openJobs.length+'</div><div class="sl">Open Positions</div></div>';
+  html+='<div class="sc"><div class="sv">'+active.length+'</div><div class="sl">Active Banners</div></div>';
+  html+='</div>';
+  if(active.length) html+='<div class="bv">📢 Active Banner: '+active[0].text+'</div>';
+  html+='<div class="tw"><div class="th"><div class="tt">Recent Blog Posts</div><button class="btn bp bsm" onclick=\"nav(\'blog\')\">Manage →</button></div>';
+  html+='<div class="ox"><table><thead><tr><th>Title</th><th>Category</th><th>Author</th><th>Date</th><th>Status</th></tr></thead><tbody>';
+  if(blog.length){
+    blog.slice(0,5).forEach(function(p){
+      html+='<tr><td><strong>'+p.title+'</strong></td><td>'+p.category+'</td><td>'+p.author+'</td><td>'+p.date+'</td>';
+      html+='<td><span class="badge '+(p.published?'bg-s':'bg-m')+'">'+(p.published?'Published':'Draft')+'</span></td></tr>';
+    });
+  } else html+='<tr><td colspan="5"><div class="empty">📰 No blog posts yet</div></td></tr>';
+  html+='</tbody></table></div></div>';
+  html+='<div class="tw"><div class="th"><div class="tt">Open Positions</div><button class="btn bp bsm" onclick=\"nav(\'careers\')\">Manage →</button></div>';
+  html+='<table><thead><tr><th>Role</th><th>Type</th><th>Location</th><th>Status</th></tr></thead><tbody>';
+  if(openJobs.length){
+    openJobs.forEach(function(j){html+='<tr><td><strong>'+j.title+'</strong></td><td>'+j.type+'</td><td>'+j.location+'</td><td><span class="badge bg-s">Open</span></td></tr>';});
+  } else html+='<tr><td colspan="4"><div class="empty">💼 No open positions</div></td></tr>';
+  html+='</tbody></table></div>';
+  return html;
+}
+
+function rBlog(){
+  var posts=D.blog||[];
+  var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;">';
+  html+='<div><div class="pt">Blog Posts</div><div class="ps">'+posts.length+' posts</div></div>';
+  html+='<button class="btn bp" onclick="showPost(-1)">+ New Post</button></div>';
+  html+='<div class="tw"><div class="ox"><table><thead><tr><th>Post</th><th>Category</th><th>Author</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+  if(posts.length){
+    posts.forEach(function(p,i){
+      html+='<tr><td><strong>'+p.title+'</strong><div style="font-size:11px;color:var(--text-muted);">'+p.excerpt.substring(0,60)+'...</div></td>';
+      html+='<td>'+p.category+'</td><td>'+p.author+'</td><td>'+p.date+'</td>';
+      html+='<td><span class="badge '+(p.published?'bg-s':'bg-m')+'">'+(p.published?'Published':'Draft')+'</span></td>';
+      html+='<td style="white-space:nowrap;"><button class="btn bsm" onclick="showPost('+i+')">✏️ Edit</button> <button class="btn bd bsm" onclick="delPost('+i+')">🗑️</button></td></tr>';
+    });
+  } else html+='<tr><td colspan="6"><div class="empty">📰 No posts yet. Create your first one!</div></td></tr>';
+  html+='</tbody></table></div></div>';
+  return html;
+}
+
+function showPost(idx){
+  var p=idx===-1?{title:'',category:'News',author:'Samuel Junior Okuny',date:new Date().toLocaleDateString('en-UG',{day:'numeric',month:'long',year:'numeric'}),excerpt:'',body:'',published:false,emoji:'💡'}:D.blog[idx];
+  var cats=['News','Product','Insight','Technology','Vision','Team'];
+  var catOpts=cats.map(function(cat){return '<option value="'+cat+'"'+(p.category===cat?' selected':'')+'>'+cat+'</option>';}).join('');
+  document.getElementById('mc').innerHTML=
+    '<div class="mt">'+(idx===-1?'New Blog Post':'Edit Post')+'</div>'+
+    '<div class="fg"><label>Title</label><input type="text" id="pT" value="'+esc(p.title)+'" placeholder="Post title"/></div>'+
+    '<div class="fr"><div class="fg"><label>Category</label><select id="pC">'+catOpts+'</select></div>'+
+    '<div class="fg"><label>Author</label><input type="text" id="pA" value="'+esc(p.author)+'"/></div></div>'+
+    '<div class="fr"><div class="fg"><label>Date</label><input type="text" id="pD" value="'+esc(p.date)+'"/></div>'+
+    '<div class="fg"><label>Emoji</label><input type="text" id="pE" value="'+esc(p.emoji||'💡')+'"/></div></div>'+
+    '<div class="fg"><label>Excerpt</label><textarea id="pX" rows="2">'+esc(p.excerpt)+'</textarea></div>'+
+    '<div class="fg"><label>Full Article</label><textarea id="pB" rows="8">'+esc(p.body)+'</textarea></div>'+
+    '<div class="fg"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="pP"'+(p.published?' checked':'')+' style="width:16px;height:16px;accent-color:var(--gold);"/> Publish immediately</label></div>'+
+    '<div class="ma"><button class="btn bp" onclick="savePost('+idx+')">💾 Save Post</button><button class="btn" onclick="closeMo()">Cancel</button></div>';
+  openMo();
+}
+
+function savePost(idx){
+  var p={title:document.getElementById('pT').value.trim(),category:document.getElementById('pC').value,author:document.getElementById('pA').value.trim(),date:document.getElementById('pD').value.trim(),emoji:document.getElementById('pE').value.trim()||'💡',excerpt:document.getElementById('pX').value.trim(),body:document.getElementById('pB').value.trim(),published:document.getElementById('pP').checked};
+  if(!p.title||!p.excerpt){showToast('Fill in title and excerpt');return;}
+  if(!D.blog)D.blog=[];
+  if(idx===-1)D.blog.unshift(p); else D.blog[idx]=p;
+  saveData();closeMo();showToast('✅ Post saved!');nav('blog');
+}
+function delPost(i){if(!confirm('Delete this post?'))return;D.blog.splice(i,1);saveData();showToast('Deleted.');nav('blog');}
+
+function rAnnouncements(){
+  var anns=D.announcements||[];
+  var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;">';
+  html+='<div><div class="pt">Announcements</div><div class="ps">Website banners and notices</div></div>';
+  html+='<button class="btn bp" onclick="showAnn()">+ New Banner</button></div>';
+  html+='<div class="tw"><div class="ox"><table><thead><tr><th>Message</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+  if(anns.length){
+    anns.forEach(function(a,i){
+      html+='<tr><td style="max-width:300px;">'+a.text+'</td><td>'+a.type+'</td>';
+      html+='<td><span class="badge '+(a.active?'bg-s':'bg-m')+'">'+(a.active?'Active':'Hidden')+'</span></td>';
+      html+='<td style="white-space:nowrap;"><button class="btn bsm '+(a.active?'bd':'bs')+'" onclick="toggleAnn('+i+')">'+(a.active?'Hide':'Show')+'</button> <button class="btn bd bsm" onclick="delAnn('+i+')">🗑️</button></td></tr>';
+    });
+  } else html+='<tr><td colspan="4"><div class="empty">📢 No announcements yet</div></td></tr>';
+  html+='</tbody></table></div></div>';
+  return html;
+}
+
+function showAnn(){
+  document.getElementById('mc').innerHTML=
+    '<div class="mt">New Announcement Banner</div>'+
+    '<div class="fg"><label>Banner Message</label><input type="text" id="aT" placeholder="e.g. Aurora Vault is now live!"/></div>'+
+    '<div class="fg"><label>Type</label><select id="aTy"><option>News</option><option>Product Launch</option><option>Maintenance</option><option>Event</option><option>Promotion</option></select></div>'+
+    '<div class="fg"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="aA" checked style="width:16px;height:16px;accent-color:var(--gold);"/> Show on website immediately</label></div>'+
+    '<div class="ma"><button class="btn bp" onclick="saveAnn()">💾 Save Banner</button><button class="btn" onclick="closeMo()">Cancel</button></div>';
+  openMo();
+}
+function saveAnn(){var t=document.getElementById('aT').value.trim();if(!t){showToast('Enter a message');return;}if(!D.announcements)D.announcements=[];D.announcements.unshift({text:t,type:document.getElementById('aTy').value,active:document.getElementById('aA').checked,ts:Date.now()});saveData();closeMo();showToast('✅ Banner saved!');nav('announcements');}
+function toggleAnn(i){D.announcements[i].active=!D.announcements[i].active;saveData();showToast('Updated!');nav('announcements');}
+function delAnn(i){if(!confirm('Delete?'))return;D.announcements.splice(i,1);saveData();showToast('Deleted.');nav('announcements');}
+
+function rTeam(){
+  var team=D.team||[];
+  var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;">';
+  html+='<div><div class="pt">Team Members</div><div class="ps">'+team.length+' members</div></div>';
+  html+='<button class="btn bp" onclick="showTeam(-1)">+ Add Member</button></div>';
+  html+='<div class="tw"><div class="ox"><table><thead><tr><th>Name</th><th>Title</th><th>Bio</th><th>Actions</th></tr></thead><tbody>';
+  if(team.length){
+    team.forEach(function(m,i){
+      html+='<tr><td><div style="display:flex;align-items:center;gap:10px;"><div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--gold-dark));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#04091E;">'+m.initials+'</div><strong>'+m.name+'</strong></div></td>';
+      html+='<td style="color:var(--gold);">'+m.title+'</td><td style="color:var(--text-muted);font-size:12px;max-width:200px;">'+m.bio.substring(0,80)+'...</td>';
+      html+='<td style="white-space:nowrap;"><button class="btn bsm" onclick="showTeam('+i+')">✏️ Edit</button> <button class="btn bd bsm" onclick="delTeam('+i+')">🗑️</button></td></tr>';
+    });
+  } else html+='<tr><td colspan="4"><div class="empty">👥 No team members yet</div></td></tr>';
+  html+='</tbody></table></div></div>';
+  return html;
+}
+
+function showTeam(idx){
+  var m=idx===-1?{name:'',initials:'',title:'',bio:'',linkedin:''}:D.team[idx];
+  document.getElementById('mc').innerHTML=
+    '<div class="mt">'+(idx===-1?'Add Team Member':'Edit Member')+'</div>'+
+    '<div class="fr"><div class="fg"><label>Full Name</label><input type="text" id="tN" value="'+esc(m.name)+'"/></div>'+
+    '<div class="fg"><label>Initials (2 letters)</label><input type="text" id="tI" value="'+esc(m.initials)+'" maxlength="2" placeholder="e.g. SJ"/></div></div>'+
+    '<div class="fg"><label>Title / Role</label><input type="text" id="tT" value="'+esc(m.title)+'" placeholder="e.g. Founder & CEO"/></div>'+
+    '<div class="fg"><label>Bio</label><textarea id="tB" rows="4">'+esc(m.bio)+'</textarea></div>'+
+    '<div class="fg"><label>LinkedIn URL (optional)</label><input type="url" id="tL" value="'+esc(m.linkedin||'')+'"/></div>'+
+    '<div class="ma"><button class="btn bp" onclick="saveTeam('+idx+')">💾 Save</button><button class="btn" onclick="closeMo()">Cancel</button></div>';
+  openMo();
+}
+function saveTeam(idx){var m={name:document.getElementById('tN').value.trim(),initials:document.getElementById('tI').value.trim().toUpperCase(),title:document.getElementById('tT').value.trim(),bio:document.getElementById('tB').value.trim(),linkedin:document.getElementById('tL').value.trim()};if(!m.name||!m.title){showToast('Name and title required');return;}if(!D.team)D.team=[];if(idx===-1)D.team.push(m);else D.team[idx]=m;saveData();closeMo();showToast('✅ Saved!');nav('team');}
+function delTeam(i){if(!confirm('Remove?'))return;D.team.splice(i,1);saveData();showToast('Removed.');nav('team');}
+
+function rProducts(){
+  var prods=D.products||[];
+  var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;">';
+  html+='<div><div class="pt">Products</div><div class="ps">'+prods.length+' products</div></div>';
+  html+='<button class="btn bp" onclick="showProd(-1)">+ Add Product</button></div>';
+  html+='<div class="tw"><div class="ox"><table><thead><tr><th>Product</th><th>Tagline</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+  if(prods.length){
+    prods.forEach(function(p,i){
+      html+='<tr><td><strong>'+p.emoji+' '+p.name+'</strong></td><td>'+p.tagline+'</td>';
+      html+='<td><span class="badge '+(p.live?'bg-s':'bg-m')+'">'+(p.live?'Live':'Coming Soon')+'</span></td>';
+      html+='<td style="white-space:nowrap;"><button class="btn bsm" onclick="showProd('+i+')">✏️ Edit</button> <button class="btn bd bsm" onclick="delProd('+i+')">🗑️</button></td></tr>';
+    });
+  } else html+='<tr><td colspan="4"><div class="empty">🛍️ No products yet</div></td></tr>';
+  html+='</tbody></table></div></div>';
+  return html;
+}
+
+function showProd(idx){
+  var p=idx===-1?{name:'',tagline:'',description:'',emoji:'🚀',tags:'',live:false,link:''}:D.products[idx];
+  document.getElementById('mc').innerHTML=
+    '<div class="mt">'+(idx===-1?'New Product':'Edit Product')+'</div>'+
+    '<div class="fr"><div class="fg"><label>Product Name</label><input type="text" id="prN" value="'+esc(p.name)+'" placeholder="e.g. Aurora Vault"/></div>'+
+    '<div class="fg"><label>Emoji Icon</label><input type="text" id="prE" value="'+esc(p.emoji||'🚀')+'"/></div></div>'+
+    '<div class="fg"><label>Tagline</label><input type="text" id="prTg" value="'+esc(p.tagline)+'" placeholder="Short description"/></div>'+
+    '<div class="fg"><label>Full Description</label><textarea id="prD" rows="4">'+esc(p.description)+'</textarea></div>'+
+    '<div class="fg"><label>Tags (comma separated)</label><input type="text" id="prTa" value="'+esc(p.tags)+'" placeholder="Finance, Uganda, Mobile Money"/></div>'+
+    '<div class="fg"><label>Link URL</label><input type="text" id="prL" value="'+esc(p.link||'')+'" placeholder="aurora-vault-landing.html"/></div>'+
+    '<div class="fg"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="prLv"'+(p.live?' checked':'')+' style="width:16px;height:16px;accent-color:var(--gold);"/> Product is Live</label></div>'+
+    '<div class="ma"><button class="btn bp" onclick="saveProd('+idx+')">💾 Save</button><button class="btn" onclick="closeMo()">Cancel</button></div>';
+  openMo();
+}
+function saveProd(idx){var p={name:document.getElementById('prN').value.trim(),emoji:document.getElementById('prE').value.trim()||'🚀',tagline:document.getElementById('prTg').value.trim(),description:document.getElementById('prD').value.trim(),tags:document.getElementById('prTa').value.trim(),link:document.getElementById('prL').value.trim(),live:document.getElementById('prLv').checked};if(!p.name){showToast('Name required');return;}if(!D.products)D.products=[];if(idx===-1)D.products.push(p);else D.products[idx]=p;saveData();closeMo();showToast('✅ Saved!');nav('products');}
+function delProd(i){if(!confirm('Delete?'))return;D.products.splice(i,1);saveData();showToast('Deleted.');nav('products');}
+
+function rCareers(){
+  var jobs=D.careers||[];
+  var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;">';
+  html+='<div><div class="pt">Job Listings</div><div class="ps">'+jobs.filter(function(j){return j.open;}).length+' open positions</div></div>';
+  html+='<button class="btn bp" onclick="showJob(-1)">+ Post Job</button></div>';
+  html+='<div class="tw"><div class="ox"><table><thead><tr><th>Role</th><th>Type</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+  if(jobs.length){
+    jobs.forEach(function(j,i){
+      html+='<tr><td><strong>'+j.title+'</strong></td><td>'+j.type+'</td><td>'+j.location+'</td>';
+      html+='<td><span class="badge '+(j.open?'bg-s':'bg-d')+'">'+(j.open?'Open':'Closed')+'</span></td>';
+      html+='<td style="white-space:nowrap;"><button class="btn bsm '+(j.open?'bd':'bs')+'" onclick="toggleJob('+i+')">'+(j.open?'Close':'Reopen')+'</button> <button class="btn bsm" onclick="showJob('+i+')">✏️</button> <button class="btn bd bsm" onclick="delJob('+i+')">🗑️</button></td></tr>';
+    });
+  } else html+='<tr><td colspan="5"><div class="empty">💼 No job listings yet</div></td></tr>';
+  html+='</tbody></table></div></div>';
+  return html;
+}
+
+function showJob(idx){
+  var j=idx===-1?{title:'',type:'Full-time',location:'Kampala, Uganda',description:'',tags:'',open:true}:D.careers[idx];
+  var types=['Full-time','Part-time','Contract','Internship','Remote'];
+  var tOpts=types.map(function(t){return '<option value="'+t+'"'+(j.type===t?' selected':'')+'>'+t+'</option>';}).join('');
+  document.getElementById('mc').innerHTML=
+    '<div class="mt">'+(idx===-1?'Post New Job':'Edit Job')+'</div>'+
+    '<div class="fg"><label>Job Title</label><input type="text" id="jT" value="'+esc(j.title)+'" placeholder="e.g. Frontend Developer"/></div>'+
+    '<div class="fr"><div class="fg"><label>Type</label><select id="jTy">'+tOpts+'</select></div>'+
+    '<div class="fg"><label>Location</label><input type="text" id="jL" value="'+esc(j.location)+'"/></div></div>'+
+    '<div class="fg"><label>Description</label><textarea id="jD" rows="5">'+esc(j.description)+'</textarea></div>'+
+    '<div class="fg"><label>Tags (comma separated)</label><input type="text" id="jTa" value="'+esc(j.tags)+'" placeholder="JavaScript, React, Firebase"/></div>'+
+    '<div class="fg"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="jO"'+(j.open?' checked':'')+' style="width:16px;height:16px;accent-color:var(--gold);"/> Position is Open</label></div>'+
+    '<div class="ma"><button class="btn bp" onclick="saveJob('+idx+')">💾 Save</button><button class="btn" onclick="closeMo()">Cancel</button></div>';
+  openMo();
+}
+function saveJob(idx){var j={title:document.getElementById('jT').value.trim(),type:document.getElementById('jTy').value,location:document.getElementById('jL').value.trim(),description:document.getElementById('jD').value.trim(),tags:document.getElementById('jTa').value.trim(),open:document.getElementById('jO').checked};if(!j.title){showToast('Title required');return;}if(!D.careers)D.careers=[];if(idx===-1)D.careers.push(j);else D.careers[idx]=j;saveData();closeMo();showToast('✅ Saved!');nav('careers');}
+function toggleJob(i){D.careers[i].open=!D.careers[i].open;saveData();showToast('Updated!');nav('careers');}
+function delJob(i){if(!confirm('Delete?'))return;D.careers.splice(i,1);saveData();showToast('Deleted.');nav('careers');}
+
+function rStats(){
+  var s=D.stats||{};
+  return '<div class="pt">Homepage Stats</div><div class="ps">Numbers shown on the public website</div>'+
+    '<div class="fw"><div class="fr">'+
+    '<div class="fg"><label>Groups / Organizations</label><input type="text" id="sG" value="'+esc(s.groups||'1+')+'" placeholder="50+"/></div>'+
+    '<div class="fg"><label>Members Served</label><input type="text" id="sM" value="'+esc(s.members||'20+')+'" placeholder="1,200+"/></div>'+
+    '<div class="fg"><label>Money Tracked</label><input type="text" id="sS" value="'+esc(s.savings||'UGX 1M+')+'" placeholder="UGX 500M+"/></div>'+
+    '<div class="fg"><label>Year Founded</label><input type="text" id="sF" value="'+esc(s.founded||'2026')+'"/></div>'+
+    '</div><button class="btn bp" onclick="saveStats()">💾 Update Stats</button></div>'+
+    '<div style="background:rgba(201,168,76,0.08);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:13px;color:var(--text-muted);">ℹ️ These numbers appear in the stats bar on the homepage. Update them regularly to reflect real growth.</div>';
+}
+function saveStats(){D.stats={groups:document.getElementById('sG').value.trim(),members:document.getElementById('sM').value.trim(),savings:document.getElementById('sS').value.trim(),founded:document.getElementById('sF').value.trim()};saveData();showToast('✅ Stats updated!');}
+
+function rSettings(){
+  var email=localStorage.getItem('apn_admin_email')||'samueljuniorokuny@outlook.com';
+  return '<div class="pt">Settings</div><div class="ps">Admin panel configuration</div>'+
+    '<div class="fw"><div style="font-weight:600;margin-bottom:14px;">🔐 Change Admin Credentials</div>'+
+    '<div class="fg"><label>Admin Email</label><input type="email" id="seE" value="'+esc(email)+'"/></div>'+
+    '<div class="fg"><label>New Password</label><input type="password" id="seP" placeholder="Enter new password (min 8 chars)"/></div>'+
+    '<div class="fg"><label>Confirm Password</label><input type="password" id="seC" placeholder="Confirm new password"/></div>'+
+    '<button class="btn bp" onclick="saveCreds()">💾 Save Credentials</button></div>'+
+    '<div class="fw"><div style="font-weight:600;margin-bottom:14px;">🌐 Website Files</div>'+
+    '<div style="font-size:13px;color:var(--text-muted);line-height:2.2;">'+
+    '<div>Main Website: <strong style="color:var(--text);">apn-website.html</strong></div>'+
+    '<div>Aurora Vault Landing: <strong style="color:var(--text);">aurora-vault-landing.html</strong></div>'+
+    '<div>Aurora Vault App: <strong style="color:var(--text);">app.html?group=mapsaa</strong></div>'+
+    '<div>Landlord Portal: <strong style="color:var(--text);">landlord.html</strong></div>'+
+    '<div>APN Admin (this page): <strong style="color:var(--text);">apn-admin.html</strong></div>'+
+    '</div></div>';
+}
+function saveCreds(){var e=document.getElementById('seE').value.trim().toLowerCase();var p=document.getElementById('seP').value;var c=document.getElementById('seC').value;if(!e){showToast('Enter email');return;}if(p&&p!==c){showToast('Passwords do not match');return;}if(p&&p.length<8){showToast('Min 8 characters');return;}localStorage.setItem('apn_admin_email',e);if(p)localStorage.setItem('apn_admin_pass',p);showToast('✅ Credentials updated!');}
+
+// Helpers
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function openMo(){document.getElementById('modal').classList.add('open');}
+function closeMo(){document.getElementById('modal').classList.remove('open');}
+document.getElementById('modal').addEventListener('click',function(e){if(e.target===this)closeMo();});
+function showToast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},3000);}
+</script>
+</body>
+</html>
