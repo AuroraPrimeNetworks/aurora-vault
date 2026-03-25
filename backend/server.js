@@ -1,371 +1,393 @@
-// MAPSAA Piggy Bank - Backend Server
-// MTN MoMo Integration (Collections + Disbursements)
-// Run: node server.js
+/**
+ * Aurora Vault — Railway Backend
+ * Pesapal v3 Payment Gateway Integration
+ *
+ * Endpoints:
+ *   POST /pesapal/order   — Create a Pesapal order, return redirect URL
+ *   POST /pesapal/verify  — Verify payment status by tracking ID
+ *   POST /pesapal/ipn     — Pesapal Instant Payment Notification webhook
+ *   GET  /health          — Health check (Railway uses this)
+ *
+ * Environment variables (set in Railway → Variables tab):
+ *   PESAPAL_CONSUMER_KEY      — From Pesapal Merchant Portal
+ *   PESAPAL_CONSUMER_SECRET   — From Pesapal Merchant Portal
+ *   PESAPAL_IPN_ID            — After registering IPN URL (step below)
+ *   PESAPAL_ENV               — "sandbox" or "live" (default: sandbox)
+ *   FIREBASE_SERVICE_ACCOUNT  — JSON string of Firebase service account key
+ *   PORT                      — Set automatically by Railway
+ */
 
-const http = require('http');
-const https = require('https');
-const crypto = require('crypto');
+const express    = require('express');
+const cors       = require('cors');
+const axios      = require('axios');
+const admin      = require('firebase-admin');
 
-// ── CONFIG ────────────────────────────────────────────────────────────────────
-const CONFIG = {
-  port: process.env.PORT || 3000,
-  // MAPSAA Group MTN Number (where all savings are collected & disbursed from)
-  groupMomoNumber: process.env.GROUP_MOMO || '256790732411', // 0790732411 converted to international format
-  // MTN MoMo Sandbox credentials
-  collections: {
-    subscriptionKey: process.env.COLL_KEY || 'cf5bd623456548c496203cf869453ccd',
-    userId: process.env.COLL_USER_ID || '',
-    apiSecret: process.env.COLL_SECRET || '',
-  },
-  disbursements: {
-    subscriptionKey: process.env.DISB_KEY || '65d8ff671dba447a9f49330770cd9c42',
-    userId: process.env.DISB_USER_ID || '',
-    apiSecret: process.env.DISB_SECRET || '',
-  },
-  // Change to 'mtncongo' or your country when going live
-  environment: process.env.MOMO_ENV || 'sandbox',
-  baseUrl: 'sandbox.momodeveloper.mtn.com',
-  currency: 'EUR', // Use EUR in sandbox, change to UGX when live
-  callbackUrl: process.env.CALLBACK_URL || 'https://webhook.site/mapsaa-callback',
+const app  = express();
+const PORT = process.env.PORT || 3000;
+
+// ── CORS — allow requests from your HTML files ─────────────────────────────
+app.use(cors({
+  origin: [
+    'https://mapsaa-vault-production.up.railway.app',
+    'http://localhost:3000',
+    // Add your custom domain here if you have one e.g. 'https://auroravault.ug'
+    /\.html$/   // allow file:// testing during development
+  ],
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization']
+}));
+app.use(express.json());
+
+// ── FIREBASE ADMIN (for writing confirmed payments to Firestore) ───────────
+let db = null;
+try {
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
+    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+    : null;
+  if (serviceAccount) {
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    db = admin.firestore();
+    console.log('✅ Firebase Admin connected');
+  } else {
+    console.warn('⚠️  FIREBASE_SERVICE_ACCOUNT not set — Firestore writes disabled');
+  }
+} catch (e) {
+  console.error('Firebase init error:', e.message);
+}
+
+// ── PESAPAL CONFIG ─────────────────────────────────────────────────────────
+const PESAPAL_ENV    = process.env.PESAPAL_ENV || 'sandbox';
+const PESAPAL_BASE   = PESAPAL_ENV === 'live'
+  ? 'https://pay.pesapal.com/v3'
+  : 'https://cybqa.pesapal.com/pesapalv3';
+
+const getCredentials = async () => {
+  // First try environment variables (Railway Variables tab)
+  if (process.env.PESAPAL_CONSUMER_KEY && process.env.PESAPAL_CONSUMER_SECRET) {
+    return {
+      key:    process.env.PESAPAL_CONSUMER_KEY,
+      secret: process.env.PESAPAL_CONSUMER_SECRET,
+      ipnId:  process.env.PESAPAL_IPN_ID || ''
+    };
+  }
+  // Fallback: read from Firestore platform_config (set via Landlord Portal)
+  if (db) {
+    const doc = await db.collection('platform_config').doc('pesapal').get();
+    if (doc.exists) {
+      const d = doc.data();
+      return { key: d.pesapalKey, secret: d.pesapalSecret, ipnId: d.pesapalIpnId || '' };
+    }
+  }
+  throw new Error('Pesapal credentials not configured. Set PESAPAL_CONSUMER_KEY and PESAPAL_CONSUMER_SECRET in Railway Variables.');
 };
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
-function generateUUID() {
-  return crypto.randomUUID();
+// ── TOKEN CACHE — Pesapal tokens last ~5 minutes ───────────────────────────
+let _token       = null;
+let _tokenExpiry = 0;
+
+async function getPesapalToken() {
+  if (_token && Date.now() < _tokenExpiry) return _token;
+  const { key, secret } = await getCredentials();
+  const res = await axios.post(`${PESAPAL_BASE}/api/Auth/RequestToken`, {
+    consumer_key:    key,
+    consumer_secret: secret
+  }, { headers: { Accept: 'application/json', 'Content-Type': 'application/json' } });
+  if (!res.data.token) throw new Error('Pesapal token error: ' + JSON.stringify(res.data));
+  _token       = res.data.token;
+  _tokenExpiry = Date.now() + (4 * 60 * 1000); // expire 1 min early to be safe
+  return _token;
 }
 
-function makeRequest(options, body) {
-  return new Promise((resolve, reject) => {
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          resolve({ status: res.statusCode, body: data ? JSON.parse(data) : {} });
-        } catch(e) {
-          resolve({ status: res.statusCode, body: data });
-        }
+// ── REGISTER IPN URL (call once on startup to get your IPN ID) ────────────
+async function registerIPN() {
+  try {
+    const token   = await getPesapalToken();
+    const ipnUrl  = `https://mapsaa-vault-production.up.railway.app/pesapal/ipn`;
+    const res     = await axios.post(`${PESAPAL_BASE}/api/URLSetup/RegisterIPN`, {
+      url:              ipnUrl,
+      ipn_notification_type: 'GET'
+    }, {
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    });
+    if (res.data.ipn_id) {
+      console.log('✅ IPN registered. Your IPN ID:', res.data.ipn_id);
+      console.log('   Set PESAPAL_IPN_ID =', res.data.ipn_id, 'in Railway Variables');
+      // Auto-save to Firestore so Landlord Portal shows it
+      if (db) {
+        await db.collection('platform_config').doc('pesapal').set(
+          { pesapalIpnId: res.data.ipn_id, ipnRegisteredAt: Date.now() },
+          { merge: true }
+        );
+      }
+    } else {
+      console.warn('IPN register response:', res.data);
+    }
+  } catch (e) {
+    console.warn('IPN registration skipped (will retry on next restart):', e.message);
+  }
+}
+
+// ── HEALTH CHECK ──────────────────────────────────────────────────────────
+app.get('/health', (req, res) => res.json({ status: 'ok', env: PESAPAL_ENV, ts: Date.now() }));
+app.get('/', (req, res) => res.json({ service: 'Aurora Vault Payment Server', version: '2.0', gateway: 'Pesapal' }));
+
+// ── POST /pesapal/order — Create order & return Pesapal redirect URL ───────
+app.post('/pesapal/order', async (req, res) => {
+  try {
+    const {
+      groupId, memberId, memberName, memberEmail, phone,
+      amount, currency = 'UGX', method,
+      month, week, orderId, description, callbackUrl
+    } = req.body;
+
+    if (!amount || !orderId) {
+      return res.status(400).json({ error: 'amount and orderId are required' });
+    }
+
+    const token      = await getPesapalToken();
+    const { ipnId }  = await getCredentials();
+
+    // Build billing address
+    const billing = {
+      email_address: memberEmail || 'member@auroravault.ug',
+      phone_number:  phone || '',
+      country_code:  'UG',
+      first_name:    (memberName || 'Aurora Member').split(' ')[0],
+      last_name:     (memberName || 'Member').split(' ').slice(1).join(' ') || 'Member',
+      line_1:        'Aurora Vault Group',
+      city:          'Kampala',
+      state:         'Kampala',
+      postal_code:   '0000',
+      zip_code:      '0000'
+    };
+
+    // Pesapal SubmitOrderRequest
+    const orderPayload = {
+      id:              orderId,
+      currency:        currency,
+      amount:          Number(amount),
+      description:     description || `Aurora Vault deposit — ${month} Week ${week + 1}`,
+      callback_url:    callbackUrl || `https://mapsaa-vault-production.up.railway.app/pesapal/done`,
+      notification_id: ipnId || '',
+      billing_address: billing,
+      // Optional: pre-select payment method
+      // payment_method:  method === 'card' ? 'CREDITCARD' : method === 'mtn' ? 'MTNMOMO' : method === 'airtel' ? 'AIRTEL' : ''
+    };
+
+    const orderRes = await axios.post(
+      `${PESAPAL_BASE}/api/Transactions/SubmitOrderRequest`,
+      orderPayload,
+      { headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } }
+    );
+
+    if (!orderRes.data.redirect_url) {
+      console.error('Pesapal order error:', orderRes.data);
+      // Return fallback flag so the app shows manual instructions
+      return res.json({ useFallback: true, error: orderRes.data.error || 'No redirect URL returned' });
+    }
+
+    // Store pending order in Firestore for later IPN confirmation
+    if (db) {
+      await db.collection('pending_payments').doc(orderId).set({
+        groupId, memberId, memberName, amount, method,
+        month, week, orderId,
+        orderTrackingId: orderRes.data.order_tracking_id || '',
+        status: 'pending',
+        createdAt: Date.now()
       });
+    }
+
+    return res.json({
+      redirectUrl:      orderRes.data.redirect_url,
+      orderTrackingId:  orderRes.data.order_tracking_id,
+      merchantReference: orderId
     });
-    req.on('error', reject);
-    if (body) req.write(JSON.stringify(body));
-    req.end();
-  });
-}
 
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Content-Type': 'application/json',
-  };
-}
-
-function parseBody(req) {
-  return new Promise((resolve) => {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
-      try { resolve(JSON.parse(body)); }
-      catch(e) { resolve({}); }
-    });
-  });
-}
-
-// ── SETUP: Create API User + Get Secret ───────────────────────────────────────
-async function setupApiUser(product, subKey) {
-  const userId = generateUUID();
-  console.log(`Setting up ${product} user: ${userId}`);
-
-  // Step 1: Create API user
-  const createOptions = {
-    hostname: CONFIG.baseUrl,
-    path: `/v1_0/apiuser`,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Reference-Id': userId,
-      'Ocp-Apim-Subscription-Key': subKey,
-    }
-  };
-  const createRes = await makeRequest(createOptions, { providerCallbackHost: 'https://mapsaa-vault-production.up.railway.app' });
-  if (createRes.status !== 201) {
-    console.error(`Failed to create ${product} user:`, createRes);
-    return null;
+  } catch (e) {
+    console.error('/pesapal/order error:', e.message);
+    return res.json({ useFallback: true, error: e.message });
   }
-
-  // Step 2: Get API secret
-  const secretOptions = {
-    hostname: CONFIG.baseUrl,
-    path: `/v1_0/apiuser/${userId}/apikey`,
-    method: 'POST',
-    headers: { 'Ocp-Apim-Subscription-Key': subKey }
-  };
-  const secretRes = await makeRequest(secretOptions, null);
-  if (secretRes.status !== 201) {
-    console.error(`Failed to get ${product} secret:`, secretRes);
-    return null;
-  }
-
-  return { userId, apiSecret: secretRes.body.apiKey };
-}
-
-// ── GET ACCESS TOKEN ──────────────────────────────────────────────────────────
-async function getAccessToken(product, userId, apiSecret, subKey) {
-  const credentials = Buffer.from(`${userId}:${apiSecret}`).toString('base64');
-  const options = {
-    hostname: CONFIG.baseUrl,
-    path: `/${product}/token/`,
-    method: 'POST',
-    headers: {
-      'Authorization': `Basic ${credentials}`,
-      'Ocp-Apim-Subscription-Key': subKey,
-      'Content-Length': 0,
-    }
-  };
-  const res = await makeRequest(options, null);
-  if (res.status === 200) return res.body.access_token;
-  console.error('Token error:', res);
-  return null;
-}
-
-// ── COLLECTIONS: Request payment from member ──────────────────────────────────
-async function requestPayment({ amount, phone, memberId, memberName, month }) {
-  const token = await getAccessToken(
-    'collection',
-    CONFIG.collections.userId,
-    CONFIG.collections.apiSecret,
-    CONFIG.collections.subscriptionKey
-  );
-  if (!token) return { success: false, error: 'Could not get access token' };
-
-  const referenceId = generateUUID();
-  const options = {
-    hostname: CONFIG.baseUrl,
-    path: '/collection/v1_0/requesttopay',
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'X-Reference-Id': referenceId,
-      'X-Target-Environment': CONFIG.environment,
-      'Ocp-Apim-Subscription-Key': CONFIG.collections.subscriptionKey,
-      'Content-Type': 'application/json',
-    }
-  };
-
-  const body = {
-    amount: String(amount),
-    currency: CONFIG.currency,
-    externalId: memberId,
-    payer: {
-      partyIdType: 'MSISDN',
-      partyId: phone.replace(/^0/, '256'), // Convert 07xx to 2567xx
-    },
-    payerMessage: `MAPSAA savings for ${month}`,
-    payeeNote: `Payment from ${memberName} - ${month} savings`,
-    payee: {
-      partyIdType: 'MSISDN',
-      partyId: CONFIG.groupMomoNumber,
-    },
-  };
-
-  const res = await makeRequest(options, body);
-  if (res.status === 202) {
-    return { success: true, referenceId, message: `Payment request sent to ${phone}. Member will receive a prompt on their phone.` };
-  }
-  return { success: false, error: res.body };
-}
-
-// ── CHECK PAYMENT STATUS ──────────────────────────────────────────────────────
-async function checkPaymentStatus(referenceId) {
-  const token = await getAccessToken(
-    'collection',
-    CONFIG.collections.userId,
-    CONFIG.collections.apiSecret,
-    CONFIG.collections.subscriptionKey
-  );
-  if (!token) return { success: false, error: 'Could not get access token' };
-
-  const options = {
-    hostname: CONFIG.baseUrl,
-    path: `/collection/v1_0/requesttopay/${referenceId}`,
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'X-Target-Environment': CONFIG.environment,
-      'Ocp-Apim-Subscription-Key': CONFIG.collections.subscriptionKey,
-    }
-  };
-
-  const res = await makeRequest(options, null);
-  return { success: true, status: res.body.status, data: res.body };
-}
-
-// ── DISBURSEMENTS: Send money to member ───────────────────────────────────────
-async function sendPayment({ amount, phone, memberId, memberName, reason }) {
-  const token = await getAccessToken(
-    'disbursement',
-    CONFIG.disbursements.userId,
-    CONFIG.disbursements.apiSecret,
-    CONFIG.disbursements.subscriptionKey
-  );
-  if (!token) return { success: false, error: 'Could not get access token' };
-
-  const referenceId = generateUUID();
-  const options = {
-    hostname: CONFIG.baseUrl,
-    path: '/disbursement/v1_0/transfer',
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'X-Reference-Id': referenceId,
-      'X-Target-Environment': CONFIG.environment,
-      'Ocp-Apim-Subscription-Key': CONFIG.disbursements.subscriptionKey,
-      'Content-Type': 'application/json',
-    }
-  };
-
-  const body = {
-    amount: String(amount),
-    currency: CONFIG.currency,
-    externalId: memberId,
-    payee: {
-      partyIdType: 'MSISDN',
-      partyId: phone.replace(/^0/, '256'),
-    },
-    payerMessage: reason || 'MAPSAA payment',
-    payeeNote: `MAPSAA: ${reason || 'Payment'} for ${memberName}`,
-  };
-
-  const res = await makeRequest(options, body);
-  if (res.status === 202) {
-    return { success: true, referenceId, message: `UGX ${amount} sent to ${phone}` };
-  }
-  return { success: false, error: res.body };
-}
-
-// ── HTTP SERVER ───────────────────────────────────────────────────────────────
-const server = http.createServer(async (req, res) => {
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200, corsHeaders());
-    res.end();
-    return;
-  }
-
-  const url = req.url.split('?')[0];
-  const headers = corsHeaders();
-
-  // Health check
-  if (url === '/' || url === '/health') {
-    res.writeHead(200, headers);
-    res.end(JSON.stringify({ status: 'MAPSAA Backend running', time: new Date().toISOString() }));
-    return;
-  }
-
-  // Setup endpoint - run once to create API users
-  if (url === '/setup' && req.method === 'POST') {
-    console.log('Running setup...');
-    const collResult = await setupApiUser('collection', CONFIG.collections.subscriptionKey);
-    const disbResult = await setupApiUser('disbursement', CONFIG.disbursements.subscriptionKey);
-
-    if (collResult) {
-      CONFIG.collections.userId = collResult.userId;
-      CONFIG.collections.apiSecret = collResult.apiSecret;
-    }
-    if (disbResult) {
-      CONFIG.disbursements.userId = disbResult.userId;
-      CONFIG.disbursements.apiSecret = disbResult.apiSecret;
-    }
-
-    res.writeHead(200, headers);
-    res.end(JSON.stringify({
-      success: true,
-      message: 'Setup complete! Save these values as environment variables.',
-      COLL_USER_ID: collResult?.userId,
-      COLL_SECRET: collResult?.apiSecret,
-      DISB_USER_ID: disbResult?.userId,
-      DISB_SECRET: disbResult?.apiSecret,
-    }));
-    return;
-  }
-
-  // Request payment from member (Collections)
-  if (url === '/pay/request' && req.method === 'POST') {
-    const body = await parseBody(req);
-    const { amount, phone, memberId, memberName, month } = body;
-    if (!amount || !phone || !memberId) {
-      res.writeHead(400, headers);
-      res.end(JSON.stringify({ success: false, error: 'Missing required fields: amount, phone, memberId' }));
-      return;
-    }
-    const result = await requestPayment({ amount, phone, memberId, memberName, month });
-    res.writeHead(result.success ? 200 : 400, headers);
-    res.end(JSON.stringify(result));
-    return;
-  }
-
-  // Check payment status
-  if (url.startsWith('/pay/status/') && req.method === 'GET') {
-    const referenceId = url.split('/pay/status/')[1];
-    const result = await checkPaymentStatus(referenceId);
-    res.writeHead(200, headers);
-    res.end(JSON.stringify(result));
-    return;
-  }
-
-  // Send money to member (Disbursements)
-  if (url === '/pay/send' && req.method === 'POST') {
-    const body = await parseBody(req);
-    const { amount, phone, memberId, memberName, reason } = body;
-    if (!amount || !phone || !memberId) {
-      res.writeHead(400, headers);
-      res.end(JSON.stringify({ success: false, error: 'Missing required fields: amount, phone, memberId' }));
-      return;
-    }
-    const result = await sendPayment({ amount, phone, memberId, memberName, reason });
-    res.writeHead(result.success ? 200 : 400, headers);
-    res.end(JSON.stringify(result));
-    return;
-  }
-
-  // MTN MoMo Callback - called by MTN when payment is successful
-  if (url === '/callback' && req.method === 'POST') {
-    const body = await parseBody(req);
-    console.log('MTN Callback received:', JSON.stringify(body));
-    // MTN sends payment confirmation here
-    // The app polls /pay/status/:id to check payment status
-    res.writeHead(200, headers);
-    res.end(JSON.stringify({ success: true, message: 'Callback received' }));
-    return;
-  }
-
-  // 404
-  res.writeHead(404, headers);
-  res.end(JSON.stringify({ error: 'Not found' }));
 });
 
-server.listen(CONFIG.port, async () => {
-  console.log(`MAPSAA Backend running on port ${CONFIG.port}`);
-  // Auto-run setup if credentials not set
-  if (!CONFIG.collections.userId || !CONFIG.disbursements.userId) {
-    console.log('Running auto-setup...');
-    try {
-      const collResult = await setupApiUser('collection', CONFIG.collections.subscriptionKey);
-      const disbResult = await setupApiUser('disbursement', CONFIG.disbursements.subscriptionKey);
-      if (collResult) { CONFIG.collections.userId = collResult.userId; CONFIG.collections.apiSecret = collResult.apiSecret; }
-      if (disbResult) { CONFIG.disbursements.userId = disbResult.userId; CONFIG.disbursements.apiSecret = disbResult.apiSecret; }
-      console.log('Auto-setup complete!');
-      console.log('COLL_USER_ID=' + CONFIG.collections.userId);
-      console.log('COLL_SECRET=' + CONFIG.collections.apiSecret);
-      console.log('DISB_USER_ID=' + CONFIG.disbursements.userId);
-      console.log('DISB_SECRET=' + CONFIG.disbursements.apiSecret);
-    } catch(e) { console.error('Auto-setup failed:', e.message); }
+// ── POST /pesapal/verify — Check payment status ────────────────────────────
+app.post('/pesapal/verify', async (req, res) => {
+  try {
+    const { orderTrackingId, orderId } = req.body;
+    if (!orderTrackingId) return res.status(400).json({ error: 'orderTrackingId required' });
+
+    const token  = await getPesapalToken();
+    const result = await axios.get(
+      `${PESAPAL_BASE}/api/Transactions/GetTransactionStatus?orderTrackingId=${orderTrackingId}`,
+      { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` } }
+    );
+
+    const status = result.data;
+
+    // If confirmed, write to Firestore and update pending record
+    if (status.payment_status_description === 'Completed' && db && orderId) {
+      const pendingRef = db.collection('pending_payments').doc(orderId);
+      const pending    = await pendingRef.get();
+      if (pending.exists && pending.data().status !== 'confirmed') {
+        await pendingRef.update({ status: 'confirmed', confirmedAt: Date.now(), pesapalData: status });
+        await writeConfirmedPayment(pending.data(), status);
+      }
+    }
+
+    return res.json(status);
+  } catch (e) {
+    console.error('/pesapal/verify error:', e.message);
+    return res.status(500).json({ error: e.message });
   }
-  console.log('Endpoints:');
-  console.log('  POST /setup          - Run once to initialize API users');
-  console.log('  POST /pay/request    - Request payment from member');
-  console.log('  GET  /pay/status/:id - Check payment status');
-  console.log('  POST /pay/send       - Send money to member');
+});
+
+// ── POST /pesapal/ipn — Pesapal webhook (called by Pesapal after payment) ──
+app.post('/pesapal/ipn', async (req, res) => {
+  try {
+    const { OrderTrackingId, OrderMerchantReference, OrderNotificationType } = req.body;
+    console.log('IPN received:', { OrderTrackingId, OrderMerchantReference, OrderNotificationType });
+
+    if (!OrderTrackingId) return res.status(400).json({ error: 'Missing OrderTrackingId' });
+
+    // Pesapal requires you to call GetTransactionStatus in response to IPN
+    const token  = await getPesapalToken();
+    const result = await axios.get(
+      `${PESAPAL_BASE}/api/Transactions/GetTransactionStatus?orderTrackingId=${OrderTrackingId}`,
+      { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` } }
+    );
+    const status = result.data;
+    console.log('IPN status:', status.payment_status_description, '| ref:', OrderMerchantReference);
+
+    if (status.payment_status_description === 'Completed' && db) {
+      const orderId    = OrderMerchantReference;
+      const pendingRef = db.collection('pending_payments').doc(orderId);
+      const pending    = await pendingRef.get();
+
+      if (pending.exists && pending.data().status !== 'confirmed') {
+        await pendingRef.update({ status: 'confirmed', confirmedAt: Date.now(), pesapalData: status });
+        await writeConfirmedPayment(pending.data(), status);
+        console.log('✅ Payment confirmed for order:', orderId);
+      }
+    }
+
+    // Pesapal requires this exact response format
+    return res.json({
+      orderNotificationType: OrderNotificationType,
+      orderTrackingId:       OrderTrackingId,
+      orderMerchantReference: OrderMerchantReference,
+      status: '200'
+    });
+
+  } catch (e) {
+    console.error('/pesapal/ipn error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Also handle GET IPN (Pesapal sends GET in some configurations)
+app.get('/pesapal/ipn', async (req, res) => {
+  req.body = req.query;
+  // Reuse POST handler logic
+  const { OrderTrackingId, OrderMerchantReference, OrderNotificationType } = req.query;
+  try {
+    if (OrderTrackingId && db) {
+      const token  = await getPesapalToken();
+      const result = await axios.get(
+        `${PESAPAL_BASE}/api/Transactions/GetTransactionStatus?orderTrackingId=${OrderTrackingId}`,
+        { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` } }
+      );
+      if (result.data.payment_status_description === 'Completed') {
+        const orderId    = OrderMerchantReference;
+        const pendingRef = db.collection('pending_payments').doc(orderId);
+        const pending    = await pendingRef.get();
+        if (pending.exists && pending.data().status !== 'confirmed') {
+          await pendingRef.update({ status: 'confirmed', confirmedAt: Date.now() });
+          await writeConfirmedPayment(pending.data(), result.data);
+        }
+      }
+    }
+    return res.json({ orderNotificationType: OrderNotificationType, orderTrackingId: OrderTrackingId, orderMerchantReference: OrderMerchantReference, status: '200' });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ── WRITE CONFIRMED PAYMENT TO FIRESTORE ───────────────────────────────────
+// This mirrors what the app does in confirmPesapalDeposit()
+// but runs server-side so it works even if the user closes the browser
+async function writeConfirmedPayment(pending, pesapalData) {
+  if (!db || !pending) return;
+  try {
+    const { groupId, memberId, amount, method, month, week, orderId } = pending;
+    const fee          = Math.floor(amount * 0.01);          // 1% platform fee
+    const shieldContrib = Math.floor(amount * 0.01);         // 1% Shield contribution
+
+    // Write to a confirmed_payments collection — the app real-time listener picks this up
+    await db.collection('confirmed_payments').add({
+      groupId, memberId, amount, method, month, week,
+      orderId, fee, shieldContrib,
+      pesapalTrackingId: pesapalData.order_tracking_id || '',
+      pesapalPaymentAccount: pesapalData.payment_account || '',
+      currency: pesapalData.currency || 'UGX',
+      confirmedAt: Date.now(),
+      processedByServer: true
+    });
+
+    // Also update the group's Firestore data directly
+    // aurora_groups/{groupId}/data/main — savings[month][week] += amount
+    if (groupId && groupId !== 'mapsaa') {
+      const dataRef = db.collection('aurora_groups').doc(groupId).collection('data').doc('main');
+      const dataDoc = await dataRef.get();
+      if (dataDoc.exists) {
+        const data = dataDoc.data();
+        const members = data.members || [];
+        const mIdx = members.findIndex(m => String(m.id) === String(memberId));
+        if (mIdx !== -1) {
+          if (!members[mIdx].savings) members[mIdx].savings = {};
+          if (!members[mIdx].savings[month]) members[mIdx].savings[month] = [0,0,0,0];
+          members[mIdx].savings[month][week] = (members[mIdx].savings[month][week] || 0) + amount;
+          if (!members[mIdx].depositLog) members[mIdx].depositLog = [];
+          members[mIdx].depositLog.push({
+            ts: Date.now(), amount, method: 'pesapal_' + (method || 'card'),
+            mo: month, week, trackingId: pesapalData.order_tracking_id || ''
+          });
+          // Shield
+          if (!data.shield) data.shield = { balance: 0, rate: 1, totalDeposited: 0 };
+          data.shield.balance = (data.shield.balance || 0) + shieldContrib;
+          data.shield.totalDeposited = (data.shield.totalDeposited || 0) + shieldContrib;
+          // Platform fees log
+          if (!data.platformFees) data.platformFees = [];
+          data.platformFees.push({ ts: Date.now(), amount: fee, memberId, method, orderId });
+          await dataRef.update({ members, shield: data.shield, platformFees: data.platformFees });
+          console.log(`✅ Savings updated for member ${memberId} in group ${groupId}: +${amount}`);
+        }
+      }
+    } else if (groupId === 'mapsaa') {
+      // Handle the legacy mapsaa group
+      const dataRef = db.collection('appdata').doc('main');
+      const dataDoc = await dataRef.get();
+      if (dataDoc.exists) {
+        const data    = dataDoc.data();
+        const members = data.members || [];
+        const mIdx    = members.findIndex(m => String(m.id) === String(memberId));
+        if (mIdx !== -1) {
+          if (!members[mIdx].savings[month]) members[mIdx].savings[month] = [0,0,0,0];
+          members[mIdx].savings[month][week] = (members[mIdx].savings[month][week] || 0) + amount;
+          if (!members[mIdx].depositLog) members[mIdx].depositLog = [];
+          members[mIdx].depositLog.push({ ts: Date.now(), amount, method: 'pesapal_' + (method||'card'), mo: month, week });
+          await dataRef.update({ members });
+        }
+      }
+    }
+  } catch (e) {
+    console.error('writeConfirmedPayment error:', e.message);
+  }
+}
+
+// ── START ──────────────────────────────────────────────────────────────────
+app.listen(PORT, async () => {
+  console.log(`Aurora Vault Payment Server running on port ${PORT}`);
+  console.log(`Pesapal environment: ${PESAPAL_ENV}`);
+  console.log(`Base URL: ${PESAPAL_BASE}`);
+  // Register IPN on startup (safe to call repeatedly — Pesapal deduplicates)
+  await registerIPN();
 });
